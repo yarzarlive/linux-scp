@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::sync::Arc;
-use russh::*;
 use russh::client::*;
 use russh::keys::*;
 use russh_sftp::client::SftpSession;
