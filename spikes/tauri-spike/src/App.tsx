@@ -1,49 +1,66 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+interface LocalItemInfo {
+  name: string;
+  is_dir: boolean;
+  size: number;
+}
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+interface ProbeResult {
+  success: boolean;
+  platform: string;
+  message: string;
+  sample_items: LocalItemInfo[];
+}
+
+export function App() {
+  const [path, setPath] = useState("/usr");
+  const [result, setResult] = useState<ProbeResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleProbe() {
+    setError(null);
+    try {
+      const data = await invoke<ProbeResult>("probe_environment", { dirPath: path });
+      setResult(data);
+    } catch (err) {
+      setError(String(err));
+    }
   }
 
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+      <h1>LinuxSCP Feasibility Spike — Tauri 2 Bridge</h1>
+      <p>Testing typed React + TypeScript IPC invocation of Rust command</p>
 
       <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
         <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+          value={path}
+          onChange={(e) => setPath(e.currentTarget.value)}
+          placeholder="/usr"
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
+        <button type="button" onClick={handleProbe}>
+          Probe Directory
+        </button>
+      </div>
+
+      {error && <div style={{ color: "red", marginTop: "1rem" }}>Error: {error}</div>}
+
+      {result && (
+        <div style={{ marginTop: "1rem", textAlign: "left" }}>
+          <h3>Platform: {result.platform}</h3>
+          <p>{result.message}</p>
+          <ul>
+            {result.sample_items.map((item) => (
+              <li key={item.name}>
+                {item.is_dir ? "📁" : "📄"} {item.name} ({item.size} bytes)
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </main>
   );
 }
