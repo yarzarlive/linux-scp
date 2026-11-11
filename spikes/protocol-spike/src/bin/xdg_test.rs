@@ -56,3 +56,4 @@ fn main() {
     assert!(!discovered_apps.is_empty(), "Expected at least some desktop applications!");
     println!("\n=== XDG Application Discovery Verified Successfully ===");
 }
+

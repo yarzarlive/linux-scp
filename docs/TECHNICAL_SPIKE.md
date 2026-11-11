@@ -70,3 +70,4 @@ With all technical feasibility spikes validated, the project is ready to begin *
 - Initialize the root application structure.
 - Build the Commander-style dual-pane UI layout.
 - Implement local filesystem browsing, navigation toolbar, path bar, and local CRUD operations.
+
