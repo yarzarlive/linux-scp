@@ -1,0 +1,34 @@
+export type ProtocolType = "SFTP" | "FTP" | "FTPS" | "SCP";
+
+export type AuthMethod =
+  | { type: "Password" }
+  | { type: "PublicKey"; details: { private_key_path: string; requires_passphrase: boolean } }
+  | { type: "Agent" }
+  | { type: "Interactive" };
+
+export interface SudoSftpConfig {
+  enabled: boolean;
+  custom_command?: string;
+}
+
+export interface ProfileTransferSettings {
+  preserve_timestamps: boolean;
+  preserve_permissions: boolean;
+  concurrency_limit: number;
+}
+
+export interface ConnectionProfile {
+  id: string;
+  name: string;
+  protocol: ProtocolType;
+  host: string;
+  port: number;
+  username: string;
+  auth_method: AuthMethod;
+  initial_local_directory?: string;
+  initial_remote_directory?: string;
+  sudo_sftp: SudoSftpConfig;
+  transfer_settings: ProfileTransferSettings;
+  created_at_ms: number;
+  updated_at_ms: number;
+}

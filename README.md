@@ -130,3 +130,4 @@ LinuxSCP/
 ├── docs/                         # Specification & architecture blueprints
 └── spikes/                       # Milestone 0 technical feasibility prototypes
 ```
+

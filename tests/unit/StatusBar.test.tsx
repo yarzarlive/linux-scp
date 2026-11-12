@@ -38,3 +38,4 @@ describe("StatusBar component", () => {
     expect(screen.getByText("Backend Disconnected")).toBeInTheDocument();
   });
 });
+

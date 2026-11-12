@@ -20,6 +20,8 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tokio = { version = "1.43", features = ["full"] }
+uuid = { version = "1.29.2", features = ["v4", "serde"] }
+async-trait = "0.1.92"
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -30,3 +32,4 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+

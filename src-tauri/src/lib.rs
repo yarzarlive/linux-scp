@@ -1,6 +1,8 @@
 pub mod commands;
 pub mod errors;
 pub mod logging;
+pub mod models;
+pub mod protocol;
 
 use commands::system::{get_system_info, ping_backend};
 

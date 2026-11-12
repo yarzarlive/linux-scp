@@ -63,3 +63,4 @@ jobs:
       - name: Desktop Application Build
         working-directory: src-tauri
         run: cargo build
+

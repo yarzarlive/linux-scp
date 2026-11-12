@@ -11,3 +11,4 @@ describe("Header component", () => {
     expect(screen.getByText("Commands")).toBeInTheDocument();
   });
 });
+
