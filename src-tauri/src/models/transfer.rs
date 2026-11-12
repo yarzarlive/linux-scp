@@ -109,10 +109,60 @@ pub struct TransferJob {
     pub eta_seconds: Option<u64>,
     /// Conflict resolution rule.
     pub conflict_policy: ConflictPolicy,
+    /// Whether this job represents a recursive directory transfer.
+    #[serde(default)]
+    pub is_directory: bool,
+    /// Total number of files in this job (1 for single file, >=0 for directory).
+    #[serde(default)]
+    pub total_files: u64,
+    /// Number of files completed so far.
+    #[serde(default)]
+    pub completed_files: u64,
+    /// Name or relative path of the file currently being transferred.
+    #[serde(default)]
+    pub current_file: Option<String>,
     /// Creation timestamp (Unix ms).
     pub created_at_ms: u64,
     /// Last update timestamp (Unix ms).
     pub updated_at_ms: u64,
+}
+
+/// Throttled progress event payload emitted on `transfer://progress`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferProgressEvent {
+    pub job_id: String,
+    pub transferred_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub speed_bps: u64,
+    pub eta_seconds: Option<u64>,
+    pub completed_files: u64,
+    pub total_files: u64,
+    pub current_file: Option<String>,
+}
+
+/// Explicit conflict resolution prompt emitted on `transfer://conflict`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferConflictPrompt {
+    pub conflict_id: String,
+    pub job_id: String,
+    pub direction: TransferDirection,
+    pub source_path: String,
+    pub destination_path: String,
+    pub source_size: Option<u64>,
+    pub source_modified_at_secs: Option<u64>,
+    pub target_size: Option<u64>,
+    pub target_modified_at_secs: Option<u64>,
+}
+
+/// User decision for a pending name conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictDecision {
+    Overwrite,
+    OverwriteIfNewer,
+    Skip,
+    Rename,
+    Cancel,
 }
 
 impl TransferJob {
@@ -141,6 +191,10 @@ impl TransferJob {
             speed_bps: 0,
             eta_seconds: None,
             conflict_policy,
+            is_directory: false,
+            total_files: 1,
+            completed_files: 0,
+            current_file: None,
             created_at_ms: now,
             updated_at_ms: now,
         }

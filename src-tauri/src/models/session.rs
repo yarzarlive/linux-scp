@@ -76,6 +76,9 @@ pub struct ConnectionSession {
     pub elevation: ElevationState,
     /// Current remote working directory.
     pub current_remote_path: String,
+    /// User's remote home directory resolved on connect (if available).
+    #[serde(default)]
+    pub home_remote_path: Option<String>,
     /// Protocol capabilities for this session.
     pub capabilities: ProtocolCapabilities,
     /// Last activity timestamp (Unix ms).
@@ -106,6 +109,7 @@ impl ConnectionSession {
             status: SessionStatus::Connecting,
             elevation: ElevationState::None,
             current_remote_path: initial_remote_path.unwrap_or_else(|| "/".to_string()),
+            home_remote_path: None,
             capabilities: ProtocolCapabilities::from_protocol(protocol),
             last_active_ms: now,
         }

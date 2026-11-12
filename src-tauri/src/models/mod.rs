@@ -11,4 +11,7 @@ pub use connection::{
 };
 pub use filesystem::{FileEntry, FileMetadata, FileOwnership, FileType, UnixPermissions};
 pub use session::{ConnectionSession, ElevationState, SessionId, SessionStatus};
-pub use transfer::{ConflictPolicy, TransferDirection, TransferId, TransferJob, TransferState};
+pub use transfer::{
+    ConflictDecision, ConflictPolicy, TransferConflictPrompt, TransferDirection, TransferId,
+    TransferJob, TransferProgressEvent, TransferState,
+};

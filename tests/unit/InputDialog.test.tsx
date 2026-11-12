@@ -30,14 +30,7 @@ describe("InputDialog Component", () => {
 
   it("handles cancel button click", () => {
     const handleCancel = vi.fn();
-    render(
-      <InputDialog
-        isOpen={true}
-        title="Test"
-        onConfirm={vi.fn()}
-        onCancel={handleCancel}
-      />
-    );
+    render(<InputDialog isOpen={true} title="Test" onConfirm={vi.fn()} onCancel={handleCancel} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(handleCancel).toHaveBeenCalledTimes(1);
@@ -45,12 +38,7 @@ describe("InputDialog Component", () => {
 
   it("does not render when isOpen is false", () => {
     render(
-      <InputDialog
-        isOpen={false}
-        title="Hidden Dialog"
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
-      />
+      <InputDialog isOpen={false} title="Hidden Dialog" onConfirm={vi.fn()} onCancel={vi.fn()} />
     );
 
     expect(screen.queryByText("Hidden Dialog")).not.toBeInTheDocument();

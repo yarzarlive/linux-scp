@@ -2653,6 +2653,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
+ "shlex",
  "tauri",
  "tauri-build",
  "thiserror 2.0.21",

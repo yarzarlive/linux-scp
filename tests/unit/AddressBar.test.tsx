@@ -30,9 +30,7 @@ describe("AddressBar Component", () => {
     const backBtn = screen.getByTitle("Back (Alt+Left)");
     expect(backBtn).toBeDisabled();
 
-    rerender(
-      <AddressBar path="/home" onNavigate={vi.fn()} onBack={handleBack} canGoBack={true} />
-    );
+    rerender(<AddressBar path="/home" onNavigate={vi.fn()} onBack={handleBack} canGoBack={true} />);
     expect(backBtn).not.toBeDisabled();
     fireEvent.click(backBtn);
     expect(handleBack).toHaveBeenCalledTimes(1);
@@ -75,4 +73,3 @@ describe("AddressBar Component", () => {
     expect(handleToggleHidden).toHaveBeenCalled();
   });
 });
-

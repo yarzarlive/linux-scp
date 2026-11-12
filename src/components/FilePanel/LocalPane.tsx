@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Folder, AlertCircle, FolderPlus, FilePlus, Edit3, Trash2 } from "lucide-react";
+import { Folder, AlertCircle, FolderPlus, FilePlus, Edit3, Trash2, Upload } from "lucide-react";
 import { FileEntry } from "../../types/filesystem";
 import { IpcClient } from "../../services/ipc";
 import { AddressBar } from "./AddressBar";
@@ -8,20 +8,38 @@ import { SortColumn, SortDirection } from "./ColumnHeader";
 import { ContextMenu, ContextMenuPosition } from "./ContextMenu";
 import { InputDialog } from "../Common/InputDialog";
 import { ConfirmDialog } from "../Common/ConfirmDialog";
+import { OpenWithDialog } from "../OpenWithDialog/OpenWithDialog";
+import { PaneDropIndicator } from "./PaneDropIndicator";
 import { formatFileSize, isDirectory } from "../../utils/formatters";
+import { InternalDragPayload } from "../../utils/dragDrop";
+import { usePaneDragDrop } from "../../hooks/usePaneDragDrop";
 
 interface LocalPaneProps {
   initialPath?: string;
   onDirectoryChange?: (path: string) => void;
+  canUpload?: boolean;
+  onUpload?: (paths: string[], targetRemoteDir?: string) => void;
+  onDropDownload?: (remotePaths: string[], targetLocalDir: string) => void;
+  activeDrag?: InternalDragPayload | null;
+  onInternalDragStart?: (payload: InternalDragPayload) => void;
+  onInternalDragEnd?: () => void;
   isActivePane?: boolean;
   onFocusPane?: () => void;
+  refreshTrigger?: number;
 }
 
 export const LocalPane: React.FC<LocalPaneProps> = ({
   initialPath,
   onDirectoryChange,
+  canUpload = false,
+  onUpload,
+  onDropDownload,
+  activeDrag = null,
+  onInternalDragStart,
+  onInternalDragEnd,
   isActivePane = true,
   onFocusPane,
+  refreshTrigger = 0,
 }) => {
   const [currentPath, setCurrentPath] = useState<string>(initialPath || "");
   const [parentPath, setParentPath] = useState<string | null>(null);
@@ -43,6 +61,11 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [isOperating, setIsOperating] = useState(false);
+  const [openWithTarget, setOpenWithTarget] = useState<{
+    path: string;
+    name: string;
+    missingAppId?: string | null;
+  } | null>(null);
 
   // Context menu state
   const [contextMenuPos, setContextMenuPos] = useState<ContextMenuPosition | null>(null);
@@ -109,6 +132,14 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHidden]);
 
+  // Reload when external transfers complete
+  useEffect(() => {
+    if (refreshTrigger > 0 && currentPath) {
+      loadDirectory(currentPath, false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTrigger]);
+
   // Navigation handlers
   const handleNavigate = (path: string) => {
     loadDirectory(path, true);
@@ -155,10 +186,43 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
     }
   };
 
-  const handleOpenEntry = (entry: FileEntry) => {
+  const handleOpenEntry = async (entry: FileEntry) => {
     if (isDirectory(entry.file_type)) {
       loadDirectory(entry.path, true);
+      return;
     }
+
+    setError(null);
+    try {
+      const outcome = await IpcClient.openLocalFileDefault(entry.path);
+      if (outcome.outcome === "NeedsAppPicker") {
+        setOpenWithTarget({
+          path: entry.path,
+          name: entry.name,
+          missingAppId: outcome.missing_remembered_app_id ?? null,
+        });
+      }
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Failed to open local file";
+      if (entry.file_type.type === "Symlink" && msg.includes("is a directory")) {
+        await loadDirectory(entry.path, true);
+        return;
+      }
+      setError(msg);
+    }
+  };
+
+  const handleOpenWithEntry = (entry: FileEntry) => {
+    if (isDirectory(entry.file_type)) return;
+    setError(null);
+    setOpenWithTarget({
+      path: entry.path,
+      name: entry.name,
+      missingAppId: null,
+    });
   };
 
   const handleSortChange = (col: SortColumn) => {
@@ -302,13 +366,51 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
     return { totalCount, selectedCount, selectedBytes };
   }, [entries, selectedPaths]);
 
+  const handleSelectionChange = useCallback((next: Set<string>, focused?: string) => {
+    setSelectedPaths(next);
+    setFocusedPath(focused);
+  }, []);
+
+  const {
+    dropState,
+    handleEntryDragStart,
+    handleEntryDragEnd,
+    handlePaneDragOver,
+    handleRowDragOver,
+    handlePaneDragLeave,
+    handleRowDragLeave,
+    handlePaneDrop,
+    handleRowDrop,
+  } = usePaneDragDrop({
+    pane: "local",
+    currentPath,
+    isReady: Boolean(currentPath) && !isLoading && !error,
+    entries,
+    selectedPaths,
+    onSelectionChange: handleSelectionChange,
+    activeDrag,
+    onInternalDragStart,
+    onInternalDragEnd,
+    onAcceptDrop: onDropDownload,
+  });
+
   return (
     <section
       role="region"
       aria-label="Local Filesystem"
       onClick={onFocusPane}
+      onDragOver={handlePaneDragOver}
+      onDragLeave={handlePaneDragLeave}
+      onDrop={handlePaneDrop}
+      data-drop-status={dropState.status}
       className={`flex flex-col h-full rounded border overflow-hidden bg-commander-surface transition-colors ${
-        isActivePane ? "border-commander-accent/50" : "border-commander-border"
+        dropState.status === "valid"
+          ? "border-emerald-500 ring-1 ring-emerald-500/60"
+          : dropState.status === "invalid"
+            ? "border-rose-500/70"
+            : isActivePane
+              ? "border-commander-accent/50"
+              : "border-commander-border"
       }`}
     >
       {/* Pane Title Bar with Quick Actions */}
@@ -369,6 +471,23 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
             <Trash2 className="w-3 h-3 text-rose-400" />
             <span>Delete</span>
           </button>
+
+          {onUpload && (
+            <button
+              type="button"
+              onClick={() => onUpload(Array.from(selectedPaths))}
+              disabled={!canUpload || selectedPaths.size === 0}
+              className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                canUpload && selectedPaths.size > 0
+                  ? "bg-sky-950/60 hover:bg-sky-900/70 border-sky-700/60 text-sky-200 cursor-pointer"
+                  : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
+              }`}
+              title="Upload Selected to Remote Pane"
+            >
+              <Upload className="w-3 h-3 text-sky-400" />
+              <span>Upload</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -422,10 +541,7 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
       <FileTable
         entries={entries}
         selectedPaths={selectedPaths}
-        onSelectionChange={(next, focused) => {
-          setSelectedPaths(next);
-          setFocusedPath(focused);
-        }}
+        onSelectionChange={handleSelectionChange}
         focusedPath={focusedPath}
         onOpenEntry={handleOpenEntry}
         onNavigateParent={handleUp}
@@ -437,7 +553,17 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
         onDeleteSelected={handleOpenDelete}
         onRenameSelected={handleOpenRename}
         onNewFolder={handleOpenCreateDir}
+        onEntryDragStart={handleEntryDragStart}
+        onEntryDragEnd={handleEntryDragEnd}
+        onRowDragOver={handleRowDragOver}
+        onRowDragLeave={handleRowDragLeave}
+        onRowDrop={handleRowDrop}
+        dropHighlightPath={dropState.status !== "idle" ? dropState.hoveredEntryPath : null}
+        dropHighlightKind={dropState.status !== "idle" ? dropState.status : null}
       />
+
+      {/* Internal Drop Target Indicator (Bottom of Pane) */}
+      <PaneDropIndicator dropState={dropState} itemCount={activeDrag?.sourcePaths.length ?? 0} />
 
       {/* Pane Status / Summary Bar */}
       <div className="flex items-center justify-between px-3 py-1 bg-commander-darker border-t border-commander-border text-[11px] text-commander-subtext select-none">
@@ -461,12 +587,26 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
         hasSelection={selectedPaths.size > 0}
         isSingleSelection={selectedPaths.size === 1}
         isDirectorySelection={!!singleSelectedEntry && isDirectory(singleSelectedEntry.file_type)}
-        onOpen={singleSelectedEntry ? () => handleOpenEntry(singleSelectedEntry) : undefined}
+        onOpen={singleSelectedEntry ? () => void handleOpenEntry(singleSelectedEntry) : undefined}
+        onOpenWith={
+          singleSelectedEntry && !isDirectory(singleSelectedEntry.file_type)
+            ? () => handleOpenWithEntry(singleSelectedEntry)
+            : undefined
+        }
         onNewFolder={handleOpenCreateDir}
         onNewFile={handleOpenCreateFile}
         onRename={singleSelectedEntry ? handleOpenRename : undefined}
         onDelete={handleOpenDelete}
         onRefresh={handleRefresh}
+      />
+
+      {/* Open With Application Picker Dialog */}
+      <OpenWithDialog
+        isOpen={Boolean(openWithTarget)}
+        filePath={openWithTarget?.path ?? null}
+        fileName={openWithTarget?.name ?? null}
+        missingRememberedAppId={openWithTarget?.missingAppId}
+        onClose={() => setOpenWithTarget(null)}
       />
 
       {/* Create Directory Dialog */}

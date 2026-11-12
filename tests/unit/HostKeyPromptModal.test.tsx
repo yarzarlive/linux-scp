@@ -6,11 +6,7 @@ import { ConnectOutcome } from "../../src/types/session";
 describe("HostKeyPromptModal Component", () => {
   it("renders nothing when challenge is null", () => {
     const { container } = render(
-      <HostKeyPromptModal
-        challenge={null}
-        onApproveUnknownKey={vi.fn()}
-        onCancel={vi.fn()}
-      />
+      <HostKeyPromptModal challenge={null} onApproveUnknownKey={vi.fn()} onCancel={vi.fn()} />
     );
     expect(container.firstChild).toBeNull();
   });
@@ -39,9 +35,7 @@ describe("HostKeyPromptModal Component", () => {
     expect(screen.getByText("Verify Unknown SSH Host Key")).toBeInTheDocument();
     expect(screen.getAllByText("192.168.122.10:22").length).toBeGreaterThan(0);
     expect(screen.getByText("ssh-ed25519")).toBeInTheDocument();
-    expect(
-      screen.getByText("SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890")
-    ).toBeInTheDocument();
+    expect(screen.getByText("SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890")).toBeInTheDocument();
 
     const approveBtn = screen.getByRole("button", { name: /Trust Host Key & Connect/i });
     fireEvent.click(approveBtn);

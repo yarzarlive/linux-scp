@@ -11,6 +11,12 @@ pub enum AppError {
     #[error("Filesystem error: {0}")]
     Filesystem(String),
 
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+
+    #[error("Network error: {0}")]
+    Network(String),
+
     #[error("Protocol error: {0}")]
     Protocol(String),
 

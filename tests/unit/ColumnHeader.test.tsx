@@ -18,9 +18,7 @@ describe("ColumnHeader Component", () => {
 
   it("calls onSortChange when a column header is clicked", () => {
     const handleSortChange = vi.fn();
-    render(
-      <ColumnHeader sortBy="name" sortDirection="asc" onSortChange={handleSortChange} />
-    );
+    render(<ColumnHeader sortBy="name" sortDirection="asc" onSortChange={handleSortChange} />);
 
     const sizeButton = screen.getByTitle("Sort by Size");
     fireEvent.click(sizeButton);
@@ -29,9 +27,7 @@ describe("ColumnHeader Component", () => {
   });
 
   it("displays sort direction indicators", () => {
-    const { rerender } = render(
-      <ColumnHeader sortBy="name" sortDirection="asc" />
-    );
+    const { rerender } = render(<ColumnHeader sortBy="name" sortDirection="asc" />);
     expect(screen.getByTestId("sort-asc")).toBeInTheDocument();
 
     rerender(<ColumnHeader sortBy="name" sortDirection="desc" />);

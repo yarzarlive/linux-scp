@@ -30,6 +30,7 @@ export interface ConnectionSession {
   status: SessionStatus;
   elevation: ElevationState;
   current_remote_path: string;
+  home_remote_path?: string | null;
   capabilities: ProtocolCapabilities;
   last_active_ms: number;
 }

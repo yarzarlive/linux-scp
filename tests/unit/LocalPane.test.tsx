@@ -117,4 +117,130 @@ describe("LocalPane Component", () => {
       expect(deleteSpy).toHaveBeenCalledWith(["/home/tester/unwanted.txt"]);
     });
   });
+
+  it("opens local file with default application or shows OpenWithDialog when NeedsAppPicker", async () => {
+    vi.spyOn(IpcClient, "getHomeDirectory").mockResolvedValue("/home/tester");
+    vi.spyOn(IpcClient, "listLocalDirectory").mockResolvedValue({
+      current_path: "/home/tester",
+      parent_path: "/home",
+      entries: [
+        {
+          name: "notes.txt",
+          path: "/home/tester/notes.txt",
+          file_type: { type: "Regular" },
+          metadata: { size: 120 },
+          is_hidden: false,
+        },
+      ],
+    });
+    const openDefaultSpy = vi.spyOn(IpcClient, "openLocalFileDefault").mockResolvedValue({
+      outcome: "NeedsAppPicker",
+      extension_key: ".txt",
+      extension_display: ".txt",
+      missing_remembered_app_id: null,
+    });
+    const discoverSpy = vi.spyOn(IpcClient, "discoverDesktopApplications").mockResolvedValue({
+      extension_key: ".txt",
+      extension_display: ".txt",
+      remembered_app_id: null,
+      remembered_app_installed: false,
+      recommended_app_ids: ["org.gnome.TextEditor.desktop"],
+      applications: [
+        {
+          id: "org.gnome.TextEditor.desktop",
+          name: "Text Editor",
+          comment: "Edit text files",
+          icon: "org.gnome.TextEditor",
+          exec_raw: "gnome-text-editor %U",
+          executable: "/usr/bin/gnome-text-editor",
+          args_template: ["%U"],
+          terminal: false,
+          mime_types: ["text/plain"],
+          categories: ["Utility", "TextEditor"],
+          desktop_file_path: "/usr/share/applications/org.gnome.TextEditor.desktop",
+        },
+      ],
+    });
+
+    render(<LocalPane />);
+
+    await waitFor(() => {
+      expect(screen.getByText("notes.txt")).toBeInTheDocument();
+    });
+
+    // Double-click notes.txt to open it
+    fireEvent.doubleClick(screen.getByText("notes.txt"));
+
+    await waitFor(() => {
+      expect(openDefaultSpy).toHaveBeenCalledWith("/home/tester/notes.txt");
+      expect(discoverSpy).toHaveBeenCalledWith("/home/tester/notes.txt");
+      expect(
+        screen.getByRole("dialog", { name: /Open With — Choose Application/i })
+      ).toBeInTheDocument();
+      expect(screen.getByText("Text Editor")).toBeInTheDocument();
+    });
+  });
+
+  it("opens OpenWithDialog via context menu Open With... even when a default exists", async () => {
+    vi.spyOn(IpcClient, "getHomeDirectory").mockResolvedValue("/home/tester");
+    vi.spyOn(IpcClient, "listLocalDirectory").mockResolvedValue({
+      current_path: "/home/tester",
+      parent_path: "/home",
+      entries: [
+        {
+          name: "README.md",
+          path: "/home/tester/README.md",
+          file_type: { type: "Regular" },
+          metadata: { size: 256 },
+          is_hidden: false,
+        },
+      ],
+    });
+    const discoverSpy = vi.spyOn(IpcClient, "discoverDesktopApplications").mockResolvedValue({
+      extension_key: ".md",
+      extension_display: ".md",
+      remembered_app_id: "code.desktop",
+      remembered_app_installed: true,
+      recommended_app_ids: ["code.desktop"],
+      applications: [
+        {
+          id: "code.desktop",
+          name: "Visual Studio Code",
+          comment: "Code Editing",
+          icon: "vscode",
+          exec_raw: "/usr/share/code/code %F",
+          executable: "/usr/share/code/code",
+          args_template: ["%F"],
+          terminal: false,
+          mime_types: ["text/plain", "text/markdown"],
+          categories: ["Development"],
+          desktop_file_path: "/usr/share/applications/code.desktop",
+        },
+      ],
+    });
+
+    render(<LocalPane />);
+
+    await waitFor(() => {
+      expect(screen.getByText("README.md")).toBeInTheDocument();
+    });
+
+    // Right-click README.md row to select and open context menu
+    fireEvent.contextMenu(screen.getByText("README.md"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Open")).toBeInTheDocument();
+      expect(screen.getByText("Open With...")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("Open With..."));
+
+    await waitFor(() => {
+      expect(discoverSpy).toHaveBeenCalledWith("/home/tester/README.md");
+      expect(
+        screen.getByRole("dialog", { name: /Open With — Choose Application/i })
+      ).toBeInTheDocument();
+      expect(screen.getAllByText("Visual Studio Code").length).toBeGreaterThan(0);
+    });
+  });
 });

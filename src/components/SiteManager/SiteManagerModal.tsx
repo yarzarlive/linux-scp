@@ -13,6 +13,7 @@ import {
   EyeOff,
   X,
   Search,
+  Terminal,
 } from "lucide-react";
 import {
   AuthMethod,
@@ -27,6 +28,8 @@ interface SiteManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectAndConnect?: (profile: ConnectionProfile) => void;
+  onOpenTerminal?: (profile: ConnectionProfile) => void;
+  onSelectProfileId?: (profileId: string | null) => void;
   initialProfileId?: string;
 }
 
@@ -34,6 +37,8 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   isOpen,
   onClose,
   onSelectAndConnect,
+  onOpenTerminal,
+  onSelectProfileId,
   initialProfileId,
 }) => {
   const [profiles, setProfiles] = useState<ConnectionProfileSummary[]>([]);
@@ -62,16 +67,19 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
         const targetId = selectIdAfterLoad || selectedId || (list.length > 0 ? list[0].id : null);
         if (targetId && list.some((p) => p.id === targetId)) {
           setSelectedId(targetId);
+          onSelectProfileId?.(targetId);
           const full = await IpcClient.getConnectionProfile(targetId);
           setFormProfile(full);
           setFormSecret("");
         } else if (list.length > 0) {
           setSelectedId(list[0].id);
+          onSelectProfileId?.(list[0].id);
           const full = await IpcClient.getConnectionProfile(list[0].id);
           setFormProfile(full);
           setFormSecret("");
         } else {
           setSelectedId(null);
+          onSelectProfileId?.(null);
           setFormProfile(null);
         }
 
@@ -89,7 +97,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
         setIsLoading(false);
       }
     },
-    [selectedId]
+    [selectedId, onSelectProfileId]
   );
 
   useEffect(() => {
@@ -119,6 +127,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
     try {
       const full = await IpcClient.getConnectionProfile(id);
       setSelectedId(id);
+      onSelectProfileId?.(id);
       setFormProfile(full);
       setFormSecret("");
     } catch (err: unknown) {
@@ -255,7 +264,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   };
 
   // Save profile handler
-  const handleSave = async (andConnect = false) => {
+  const handleSave = async (action: "save" | "connect" | "terminal" = "save") => {
     if (!formProfile) return;
     setIsSaving(true);
     setErrorMessage(null);
@@ -295,9 +304,15 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
       await loadProfiles(saved.id);
 
-      if (andConnect) {
+      if (action === "connect") {
         onSelectAndConnect?.(saved);
         onClose();
+      } else if (action === "terminal") {
+        if (onOpenTerminal) {
+          onOpenTerminal(saved);
+        } else {
+          await IpcClient.launchSshTerminal(saved.id);
+        }
       }
     } catch (err: unknown) {
       setErrorMessage(
@@ -882,7 +897,26 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
             <button
               type="button"
-              onClick={() => handleSave(false)}
+              onClick={() => handleSave("terminal")}
+              disabled={
+                !formProfile ||
+                isSaving ||
+                (formProfile.protocol !== "SFTP" && formProfile.protocol !== "SCP")
+              }
+              title={
+                formProfile && formProfile.protocol !== "SFTP" && formProfile.protocol !== "SCP"
+                  ? "External SSH terminal is only available for SFTP and SCP connections"
+                  : "Save profile and launch external interactive SSH terminal"
+              }
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded font-medium border border-commander-border bg-commander-dark hover:bg-commander-selected text-commander-text hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Terminal className="w-3.5 h-3.5 text-commander-accent" />
+              <span>Open Terminal</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSave("save")}
               disabled={!formProfile || isSaving}
               className="px-3.5 py-1.5 text-xs rounded font-medium bg-commander-selected hover:bg-commander-selected/80 text-white transition-colors disabled:opacity-50"
             >
@@ -891,7 +925,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
             <button
               type="button"
-              onClick={() => handleSave(true)}
+              onClick={() => handleSave("connect")}
               disabled={!formProfile || isSaving}
               className="px-4 py-1.5 text-xs rounded font-medium bg-commander-accent hover:bg-commander-accent/90 text-commander-dark transition-colors disabled:opacity-50 cursor-pointer"
             >

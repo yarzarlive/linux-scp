@@ -18,6 +18,8 @@ export interface PingResponse {
 export type AppErrorKind =
   | "Validation"
   | "Filesystem"
+  | "PermissionDenied"
+  | "Network"
   | "Protocol"
   | "Authentication"
   | "Security"

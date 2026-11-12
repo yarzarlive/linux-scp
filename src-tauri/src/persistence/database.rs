@@ -93,6 +93,18 @@ impl Database {
             self.apply_migration_2()?;
         }
 
+        if current_version < 3 {
+            self.apply_migration_3()?;
+        }
+
+        if current_version < 4 {
+            self.apply_migration_4()?;
+        }
+
+        if current_version < 5 {
+            self.apply_migration_5()?;
+        }
+
         Ok(())
     }
 
@@ -180,6 +192,103 @@ impl Database {
 
         Ok(())
     }
+
+    fn apply_migration_3(&mut self) -> Result<(), AppError> {
+        let tx = self.conn.transaction().map_err(|e| {
+            AppError::Database(format!("Failed to start migration 3 transaction: {}", e))
+        })?;
+
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS connection_remote_state (
+                profile_id TEXT PRIMARY KEY NOT NULL,
+                last_remote_directory TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("Migration 3 table creation failed: {}", e)))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (3, ?1)",
+            [now],
+        )
+        .map_err(|e| AppError::Database(format!("Failed to record migration 3: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("Failed to commit migration 3: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn apply_migration_4(&mut self) -> Result<(), AppError> {
+        let tx = self.conn.transaction().map_err(|e| {
+            AppError::Database(format!("Failed to start migration 4 transaction: {}", e))
+        })?;
+
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS app_preferences (
+                key TEXT PRIMARY KEY NOT NULL,
+                value_json TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("Migration 4 table creation failed: {}", e)))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (4, ?1)",
+            [now],
+        )
+        .map_err(|e| AppError::Database(format!("Failed to record migration 4: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("Failed to commit migration 4: {}", e)))?;
+
+        Ok(())
+    }
+
+    fn apply_migration_5(&mut self) -> Result<(), AppError> {
+        let tx = self.conn.transaction().map_err(|e| {
+            AppError::Database(format!("Failed to start migration 5 transaction: {}", e))
+        })?;
+
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS file_app_associations (
+                extension TEXT PRIMARY KEY NOT NULL,
+                desktop_app_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("Migration 5 table creation failed: {}", e)))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (5, ?1)",
+            [now],
+        )
+        .map_err(|e| AppError::Database(format!("Failed to record migration 5: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("Failed to commit migration 5: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -195,7 +304,7 @@ mod tests {
                 r.get(0)
             })
             .expect("Should query version");
-        assert_eq!(version, 2);
+        assert_eq!(version, 5);
 
         // Verify table existence
         let count: i64 = db
@@ -207,6 +316,26 @@ mod tests {
             )
             .expect("Should query tables");
         assert_eq!(count, 1);
+
+        let pref_count: i64 = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='app_preferences'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("Should query app_preferences table");
+        assert_eq!(pref_count, 1);
+
+        let assoc_count: i64 = db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='file_app_associations'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("Should query file_app_associations table");
+        assert_eq!(assoc_count, 1);
     }
 
     #[test]

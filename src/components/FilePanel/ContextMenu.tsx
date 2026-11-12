@@ -1,5 +1,14 @@
 import React, { useEffect, useRef } from "react";
-import { FolderPlus, FilePlus, Edit3, Trash2, RefreshCw, FolderOpen } from "lucide-react";
+import {
+  FolderPlus,
+  FilePlus,
+  Edit3,
+  Trash2,
+  RefreshCw,
+  FolderOpen,
+  ExternalLink,
+  SlidersHorizontal,
+} from "lucide-react";
 
 export interface ContextMenuPosition {
   x: number;
@@ -13,10 +22,12 @@ interface ContextMenuProps {
   isSingleSelection: boolean;
   isDirectorySelection: boolean;
   onOpen?: () => void;
+  onOpenWith?: () => void;
   onNewFolder?: () => void;
   onNewFile?: () => void;
   onRename?: () => void;
   onDelete?: () => void;
+  onProperties?: () => void;
   onRefresh?: () => void;
 }
 
@@ -27,10 +38,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   isSingleSelection,
   isDirectorySelection,
   onOpen,
+  onOpenWith,
   onNewFolder,
   onNewFile,
   onRename,
   onDelete,
+  onProperties,
   onRefresh,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -70,7 +83,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
     >
       {hasSelection && (
         <>
-          {isDirectorySelection && onOpen && (
+          {isSingleSelection && (isDirectorySelection || Boolean(onOpenWith)) && onOpen && (
             <button
               type="button"
               onClick={() => {
@@ -80,8 +93,27 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors"
               role="menuitem"
             >
-              <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+              {isDirectorySelection ? (
+                <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+              ) : (
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+              )}
               <span>Open</span>
+            </button>
+          )}
+
+          {isSingleSelection && !isDirectorySelection && onOpenWith && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenWith();
+                onClose();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors"
+              role="menuitem"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-commander-accent" />
+              <span>Open With...</span>
             </button>
           )}
 
@@ -146,6 +178,21 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         >
           <FilePlus className="w-3.5 h-3.5 text-commander-accent" />
           <span>New File</span>
+        </button>
+      )}
+
+      {hasSelection && onProperties && (
+        <button
+          type="button"
+          onClick={() => {
+            onProperties();
+            onClose();
+          }}
+          className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors"
+          role="menuitem"
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5 text-commander-accent" />
+          <span>Properties...</span>
         </button>
       )}
 

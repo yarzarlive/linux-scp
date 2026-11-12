@@ -103,4 +103,3 @@ describe("Domain Models & Invariants", () => {
     expect(job.direction).toBe("upload");
   });
 });
-

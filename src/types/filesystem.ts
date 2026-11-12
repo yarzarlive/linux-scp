@@ -1,7 +1,7 @@
 export type FileType =
   | { type: "Regular" }
   | { type: "Directory" }
-  | { type: "Symlink"; target?: string }
+  | { type: "Symlink"; target?: string | null }
   | { type: "Special" };
 
 export interface UnixPermissions {
@@ -46,5 +46,12 @@ export interface FileEntry {
 export interface LocalDirectoryListing {
   current_path: string;
   parent_path?: string | null;
+  entries: FileEntry[];
+}
+
+export interface RemoteDirectoryListing {
+  current_path: string;
+  parent_path?: string | null;
+  home_path?: string | null;
   entries: FileEntry[];
 }

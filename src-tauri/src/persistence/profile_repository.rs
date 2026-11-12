@@ -279,6 +279,10 @@ impl<'a> ProfileRepository<'a> {
         let conn = self.db.connection();
         conn.execute("DELETE FROM connection_profiles WHERE id = ?1", [id])
             .map_err(|e| AppError::Database(format!("Failed to delete profile: {}", e)))?;
+        let _ = conn.execute(
+            "DELETE FROM connection_remote_state WHERE profile_id = ?1",
+            [id],
+        );
         Ok(())
     }
 

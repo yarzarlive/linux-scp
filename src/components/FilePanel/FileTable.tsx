@@ -3,6 +3,7 @@ import { FileEntry } from "../../types/filesystem";
 import { ColumnHeader, SortColumn, SortDirection } from "./ColumnHeader";
 import { FileRow } from "./FileRow";
 import { isDirectory } from "../../utils/formatters";
+import { isEntryDraggable } from "../../utils/dragDrop";
 
 interface FileTableProps {
   entries: FileEntry[];
@@ -19,6 +20,13 @@ interface FileTableProps {
   onDeleteSelected?: () => void;
   onRenameSelected?: () => void;
   onNewFolder?: () => void;
+  onEntryDragStart?: (e: React.DragEvent, entry: FileEntry) => void;
+  onEntryDragEnd?: (e: React.DragEvent) => void;
+  onRowDragOver?: (e: React.DragEvent, entry: FileEntry) => void;
+  onRowDragLeave?: (e: React.DragEvent, entry: FileEntry) => void;
+  onRowDrop?: (e: React.DragEvent, entry: FileEntry) => void;
+  dropHighlightPath?: string | null;
+  dropHighlightKind?: "valid" | "invalid" | null;
 }
 
 export const FileTable: React.FC<FileTableProps> = ({
@@ -36,6 +44,13 @@ export const FileTable: React.FC<FileTableProps> = ({
   onDeleteSelected,
   onRenameSelected,
   onNewFolder,
+  onEntryDragStart,
+  onEntryDragEnd,
+  onRowDragOver,
+  onRowDragLeave,
+  onRowDrop,
+  dropHighlightPath = null,
+  dropHighlightKind = null,
 }) => {
   const tableRef = useRef<HTMLDivElement>(null);
   const lastClickedPathRef = useRef<string | null>(null);
@@ -228,9 +243,16 @@ export const FileTable: React.FC<FileTableProps> = ({
               entry={entry}
               isSelected={selectedPaths.has(entry.path)}
               isFocused={focusedPath === entry.path}
+              draggable={!isLoading && Boolean(onEntryDragStart) && isEntryDraggable(entry)}
+              dropHighlight={dropHighlightPath === entry.path ? dropHighlightKind : null}
               onClick={handleRowClick}
               onDoubleClick={onOpenEntry}
               onContextMenu={handleRowContextMenu}
+              onDragStart={onEntryDragStart}
+              onDragEnd={onEntryDragEnd}
+              onDragOver={onRowDragOver}
+              onDragLeave={onRowDragLeave}
+              onDrop={onRowDrop}
             />
           ))
         )}

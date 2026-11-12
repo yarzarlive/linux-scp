@@ -1,16 +1,28 @@
 import React from "react";
-import { PlusCircle, Server, Unplug, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
+import {
+  PlusCircle,
+  Server,
+  Unplug,
+  RefreshCw,
+  ShieldCheck,
+  ShieldAlert,
+  Terminal,
+  SlidersHorizontal,
+} from "lucide-react";
 import { ConnectionSession } from "../../types/session";
 
 interface ConnectionToolbarProps {
   isConnected: boolean;
   isConnecting?: boolean;
   canReconnect?: boolean;
+  canOpenTerminal?: boolean;
   activeSession?: ConnectionSession | null;
   onNewSession?: () => void;
   onSiteManager?: () => void;
   onDisconnect?: () => void;
   onReconnect?: () => void;
+  onOpenTerminal?: () => void;
+  onOpenTerminalSettings?: () => void;
   hostKeyVerified?: boolean;
 }
 
@@ -18,14 +30,18 @@ export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
   isConnected,
   isConnecting = false,
   canReconnect = false,
+  canOpenTerminal = false,
   activeSession = null,
   onNewSession,
   onSiteManager,
   onDisconnect,
   onReconnect,
+  onOpenTerminal,
+  onOpenTerminalSettings,
   hostKeyVerified = true,
 }) => {
   const canDisconnectOrCancel = isConnected || isConnecting;
+  const terminalEnabled = Boolean(canOpenTerminal || (isConnected && activeSession?.profile_id));
 
   return (
     <div
@@ -93,6 +109,39 @@ export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
           <Unplug className="w-3.5 h-3.5" />
           <span>Disconnect</span>
         </button>
+
+        <div className="h-4 w-px bg-commander-border mx-0.5" />
+
+        <button
+          type="button"
+          onClick={onOpenTerminal}
+          disabled={!terminalEnabled}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors ${
+            terminalEnabled
+              ? "bg-commander-dark hover:bg-commander-selected border-commander-border text-commander-text hover:text-white cursor-pointer"
+              : "bg-commander-dark/50 border-commander-border/40 text-commander-subtext/40 cursor-not-allowed"
+          }`}
+          title={
+            terminalEnabled
+              ? "Launch an external interactive SSH terminal for the selected connection"
+              : "Connect to or select a saved SSH/SFTP profile to open an external terminal"
+          }
+        >
+          <Terminal className="w-3.5 h-3.5 text-commander-accent" />
+          <span>Open Terminal</span>
+        </button>
+
+        {onOpenTerminalSettings && (
+          <button
+            type="button"
+            onClick={onOpenTerminalSettings}
+            className="flex items-center justify-center p-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-subtext hover:text-white transition-colors"
+            title="Configure external SSH terminal emulator"
+            aria-label="Terminal Settings"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-3 text-[11px] text-commander-subtext">

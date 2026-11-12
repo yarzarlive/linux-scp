@@ -169,5 +169,23 @@ describe("SiteManagerModal Component", () => {
       expect(deleteSpy).toHaveBeenCalledWith("profile-1");
     });
   });
-});
 
+  it("supports launching external SSH terminal for the selected profile", async () => {
+    vi.spyOn(IpcClient, "saveConnectionProfile").mockResolvedValue(mockFullProfile1);
+    const onOpenTerminal = vi.fn();
+
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} onOpenTerminal={onOpenTerminal} />);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Production Web")).toBeInTheDocument();
+    });
+
+    const openTermBtn = screen.getByRole("button", { name: /Open Terminal/i });
+    expect(openTermBtn).not.toBeDisabled();
+    fireEvent.click(openTermBtn);
+
+    await waitFor(() => {
+      expect(onOpenTerminal).toHaveBeenCalledWith(mockFullProfile1);
+    });
+  });
+});

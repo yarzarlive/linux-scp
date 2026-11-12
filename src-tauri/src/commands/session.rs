@@ -1,6 +1,8 @@
 use crate::errors::AppError;
 use crate::persistence::{Database, KnownHostEntry, KnownHostsRepository, ProfileRepository};
-use crate::protocol::{ConnectOutcome, SessionManager, SessionStateSnapshot};
+use crate::protocol::{
+    ConnectOutcome, RemoteDirectoryListing, SessionManager, SessionStateSnapshot,
+};
 use tauri::State;
 
 /// Connects to an SFTP server using a saved profile ID.
@@ -82,4 +84,112 @@ pub async fn list_known_hosts() -> Result<Vec<KnownHostEntry>, AppError> {
     })
     .await
     .map_err(|e| AppError::Internal(format!("List known hosts task failed: {}", e)))?
+}
+
+/// Lists a remote directory using the active SFTP session.
+#[tauri::command]
+pub async fn list_remote_directory(
+    state: State<'_, SessionManager>,
+    path: Option<String>,
+    show_hidden: Option<bool>,
+) -> Result<RemoteDirectoryListing, AppError> {
+    state
+        .list_remote_directory(path, show_hidden.unwrap_or(false))
+        .await
+}
+
+/// Checks whether a remote path (following symlinks) is a directory.
+#[tauri::command]
+pub async fn check_remote_path_is_dir(
+    state: State<'_, SessionManager>,
+    path: String,
+) -> Result<bool, AppError> {
+    state.check_remote_path_is_dir(path).await
+}
+
+/// Creates a new directory on the remote SFTP server.
+#[tauri::command]
+pub async fn create_remote_directory(
+    state: State<'_, SessionManager>,
+    parent_path: String,
+    dir_name: String,
+) -> Result<String, AppError> {
+    state.create_remote_directory(&parent_path, &dir_name).await
+}
+
+/// Creates a new empty file on the remote SFTP server.
+#[tauri::command]
+pub async fn create_remote_file(
+    state: State<'_, SessionManager>,
+    parent_path: String,
+    file_name: String,
+) -> Result<String, AppError> {
+    state.create_remote_file(&parent_path, &file_name).await
+}
+
+/// Renames a remote file or directory.
+#[tauri::command]
+pub async fn rename_remote_entry(
+    state: State<'_, SessionManager>,
+    source_path: String,
+    new_name: String,
+) -> Result<String, AppError> {
+    state.rename_remote_entry(&source_path, &new_name).await
+}
+
+/// Deletes a remote file or symlink.
+#[tauri::command]
+pub async fn delete_remote_file(
+    state: State<'_, SessionManager>,
+    path: String,
+) -> Result<(), AppError> {
+    state.delete_remote_file(&path).await
+}
+
+/// Deletes a remote directory (recursive only when explicitly confirmed).
+#[tauri::command]
+pub async fn delete_remote_directory(
+    state: State<'_, SessionManager>,
+    path: String,
+    recursive: bool,
+) -> Result<(), AppError> {
+    state.delete_remote_directory(&path, recursive).await
+}
+
+/// Sets Unix permissions (octal mode, optionally recursive) on one or more remote paths.
+#[tauri::command]
+pub async fn set_remote_permissions(
+    state: State<'_, SessionManager>,
+    paths: Vec<String>,
+    octal_mode: String,
+    recursive: bool,
+) -> Result<(), AppError> {
+    state
+        .set_remote_permissions(paths, &octal_mode, recursive)
+        .await
+}
+
+/// Sets numeric UID/GID (or resolves names via optional `getent`) on a remote path.
+#[tauri::command]
+pub async fn set_remote_ownership(
+    state: State<'_, SessionManager>,
+    path: String,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    user_name: Option<String>,
+    group_name: Option<String>,
+) -> Result<(), AppError> {
+    state
+        .set_remote_ownership(&path, uid, gid, user_name, group_name)
+        .await
+}
+
+/// Optionally resolves numeric UID/GID to user/group names via remote `getent`.
+#[tauri::command]
+pub async fn resolve_remote_identity(
+    state: State<'_, SessionManager>,
+    uid: Option<u32>,
+    gid: Option<u32>,
+) -> Result<crate::models::FileOwnership, AppError> {
+    state.resolve_remote_identity(uid, gid).await
 }

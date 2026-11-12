@@ -53,5 +53,32 @@ describe("ContextMenu Component", () => {
     fireEvent.click(screen.getByText("Rename (F2)"));
     expect(handleRename).toHaveBeenCalled();
   });
-});
 
+  it("renders Open and Open With... actions when a single file is selected and handlers are provided", () => {
+    const handleOpen = vi.fn();
+    const handleOpenWith = vi.fn();
+    const handleClose = vi.fn();
+
+    render(
+      <ContextMenu
+        position={{ x: 100, y: 100 }}
+        onClose={handleClose}
+        hasSelection={true}
+        isSingleSelection={true}
+        isDirectorySelection={false}
+        onOpen={handleOpen}
+        onOpenWith={handleOpenWith}
+      />
+    );
+
+    expect(screen.getByText("Open")).toBeInTheDocument();
+    expect(screen.getByText("Open With...")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Open"));
+    expect(handleOpen).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText("Open With..."));
+    expect(handleOpenWith).toHaveBeenCalledTimes(1);
+    expect(handleClose).toHaveBeenCalledTimes(2);
+  });
+});

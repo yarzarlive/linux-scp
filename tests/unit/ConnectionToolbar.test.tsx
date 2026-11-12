@@ -50,5 +50,37 @@ describe("ConnectionToolbar Component", () => {
     fireEvent.click(disconnectBtn);
     expect(handleDisconnect).toHaveBeenCalledTimes(1);
   });
-});
 
+  it("renders Open Terminal action and enables it when a connection profile is selected", () => {
+    const handleOpenTerminal = vi.fn();
+    const handleOpenTerminalSettings = vi.fn();
+
+    const { rerender } = render(
+      <ConnectionToolbar
+        isConnected={false}
+        canOpenTerminal={false}
+        onOpenTerminal={handleOpenTerminal}
+        onOpenTerminalSettings={handleOpenTerminalSettings}
+      />
+    );
+
+    const terminalBtn = screen.getByRole("button", { name: /Open Terminal/i });
+    expect(terminalBtn).toBeDisabled();
+
+    rerender(
+      <ConnectionToolbar
+        isConnected={false}
+        canOpenTerminal={true}
+        onOpenTerminal={handleOpenTerminal}
+        onOpenTerminalSettings={handleOpenTerminalSettings}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /Open Terminal/i })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /Open Terminal/i }));
+    expect(handleOpenTerminal).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /Terminal Settings/i }));
+    expect(handleOpenTerminalSettings).toHaveBeenCalledTimes(1);
+  });
+});

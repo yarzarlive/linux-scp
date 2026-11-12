@@ -1,8 +1,8 @@
 pub mod session_manager;
 pub mod sftp;
 
-pub use session_manager::{SessionManager, SessionStateSnapshot};
-pub use sftp::ConnectOutcome;
+pub use session_manager::{ActiveTransferContext, SessionManager, SessionStateSnapshot};
+pub use sftp::{ConnectOutcome, RemoteDirectoryListing};
 
 use crate::errors::AppError;
 use crate::models::{

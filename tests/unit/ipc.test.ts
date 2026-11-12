@@ -51,4 +51,3 @@ describe("IpcClient", () => {
     await expect(IpcClient.pingBackend("")).rejects.toEqual(backendError);
   });
 });
-

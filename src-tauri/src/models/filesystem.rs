@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Type classification for a file entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "target")]
+#[serde(tag = "type")]
 pub enum FileType {
     Regular,
     Directory,
@@ -286,5 +286,24 @@ mod tests {
             group_name: None,
         };
         assert_eq!(o2.owner_display(), Some("1001".to_string()));
+    }
+
+    #[test]
+    fn test_file_type_serde_matches_frontend_contract() {
+        let sym = FileType::Symlink {
+            target: Some("usr/bin".to_string()),
+        };
+        let json = serde_json::to_value(&sym).expect("Should serialize symlink FileType");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "type": "Symlink",
+                "target": "usr/bin"
+            })
+        );
+
+        let dir = FileType::Directory;
+        let dir_json = serde_json::to_value(&dir).expect("Should serialize directory FileType");
+        assert_eq!(dir_json, serde_json::json!({ "type": "Directory" }));
     }
 }

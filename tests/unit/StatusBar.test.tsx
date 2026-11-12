@@ -12,13 +12,7 @@ describe("StatusBar component", () => {
       arch: "x86_64",
     };
 
-    render(
-      <StatusBar
-        systemInfo={mockInfo}
-        backendConnected={true}
-        pingLatencyMs={12}
-      />
-    );
+    render(<StatusBar systemInfo={mockInfo} backendConnected={true} pingLatencyMs={12} />);
 
     expect(screen.getByText("Backend Online")).toBeInTheDocument();
     expect(screen.getByText("(12ms)")).toBeInTheDocument();
@@ -27,15 +21,8 @@ describe("StatusBar component", () => {
   });
 
   it("displays disconnected indicator when backend is offline", () => {
-    render(
-      <StatusBar
-        systemInfo={null}
-        backendConnected={false}
-        pingLatencyMs={null}
-      />
-    );
+    render(<StatusBar systemInfo={null} backendConnected={false} pingLatencyMs={null} />);
 
     expect(screen.getByText("Backend Disconnected")).toBeInTheDocument();
   });
 });
-
