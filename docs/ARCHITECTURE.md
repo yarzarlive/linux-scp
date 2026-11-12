@@ -107,3 +107,4 @@ If unsupported, an explicit `CapabilityError::UnsupportedOperation` is returned,
 2. **Credential Scrubbing:** Sensitive strings in memory are wrapped in zeroizing buffers and excluded from debug/tracing logs.
 3. **No Shell Interpolation:** Desktop applications and external commands are spawned via `std::process::Command` using structured argument vectors, eliminating shell injection vulnerabilities.
 4. **Internal Drag-and-Drop Only:** Drag-and-drop operations are bounded strictly between LinuxSCP's local and remote panes; desktop file dropping is unsupported.
+

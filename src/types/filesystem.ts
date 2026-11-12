@@ -42,3 +42,9 @@ export interface FileEntry {
   metadata: FileMetadata;
   is_hidden: boolean;
 }
+
+export interface LocalDirectoryListing {
+  current_path: string;
+  parent_path?: string | null;
+  entries: FileEntry[];
+}

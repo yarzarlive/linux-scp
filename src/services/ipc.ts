@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { LocalDirectoryListing } from "../types/filesystem";
 import { AppError, PingResponse, SystemInfo } from "../types/ipc";
 
 /**
@@ -35,5 +36,25 @@ export class IpcClient {
    */
   static async pingBackend(payload: string): Promise<PingResponse> {
     return this.invokeCommand<PingResponse>("ping_backend", { payload });
+  }
+
+  /**
+   * Lists authentic contents of a local directory via Rust POSIX backend.
+   */
+  static async listLocalDirectory(
+    path?: string,
+    showHidden?: boolean
+  ): Promise<LocalDirectoryListing> {
+    return this.invokeCommand<LocalDirectoryListing>("list_local_directory", {
+      path,
+      showHidden,
+    });
+  }
+
+  /**
+   * Retrieves the authentic current user home directory path.
+   */
+  static async getHomeDirectory(): Promise<string> {
+    return this.invokeCommand<string>("get_home_directory");
   }
 }
