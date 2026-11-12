@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ConnectionProfile, ConnectionProfileSummary } from "../types/connection";
 import { LocalDirectoryListing } from "../types/filesystem";
 import { AppError, PingResponse, SystemInfo } from "../types/ipc";
+import { ConnectOutcome, KnownHostEntry, SessionStateSnapshot } from "../types/session";
 
 /**
  * Type-safe IPC client bridging the React frontend to Tauri Rust commands.
@@ -147,5 +148,64 @@ export class IpcClient {
    */
   static async checkKeyringStatus(): Promise<boolean> {
     return this.invokeCommand<boolean>("check_keyring_status");
+  }
+
+  /**
+   * Connects to an SFTP server using a saved profile ID.
+   */
+  static async connectSftpSession(profileId: string, secret?: string): Promise<ConnectOutcome> {
+    return this.invokeCommand<ConnectOutcome>("connect_sftp_session", {
+      profileId,
+      secret,
+    });
+  }
+
+  /**
+   * Disconnects the active SFTP session or cancels an in-progress connection.
+   */
+  static async disconnectSftpSession(): Promise<SessionStateSnapshot> {
+    return this.invokeCommand<SessionStateSnapshot>("disconnect_sftp_session");
+  }
+
+  /**
+   * Reconnects to the most recently used connection profile.
+   */
+  static async reconnectSftpSession(secret?: string): Promise<ConnectOutcome> {
+    return this.invokeCommand<ConnectOutcome>("reconnect_sftp_session", {
+      secret,
+    });
+  }
+
+  /**
+   * Retrieves the current session lifecycle state snapshot.
+   */
+  static async getSessionState(): Promise<SessionStateSnapshot> {
+    return this.invokeCommand<SessionStateSnapshot>("get_session_state");
+  }
+
+  /**
+   * Explicitly trusts and stores an unknown SSH host key after user approval.
+   */
+  static async trustHostKey(
+    host: string,
+    port: number,
+    algorithm: string,
+    fingerprintSha256: string,
+    publicKeyOpenssh: string
+  ): Promise<KnownHostEntry> {
+    return this.invokeCommand<KnownHostEntry>("trust_host_key", {
+      host,
+      port,
+      algorithm,
+      fingerprintSha256,
+      publicKeyOpenssh,
+    });
+  }
+
+  /**
+   * Lists all trusted SSH host keys in the persistent known_hosts store.
+   */
+  static async listKnownHosts(): Promise<KnownHostEntry[]> {
+    return this.invokeCommand<KnownHostEntry[]>("list_known_hosts");
   }
 }

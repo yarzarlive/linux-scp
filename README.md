@@ -131,3 +131,33 @@ LinuxSCP/
 └── spikes/                       # Milestone 0 technical feasibility prototypes
 ```
 
+---
+
+## 7. Reproducible Local SSH/SFTP Test Setup
+
+Live SFTP integration tests (such as `test_live_sftp_connection_and_host_key_verification_flow` in `src-tauri/src/protocol/sftp.rs`) require an accessible OpenSSH server with the SFTP subsystem enabled.
+
+### Option A: Containerized OpenSSH Test Server (Docker / Podman)
+Launch a disposable OpenSSH server on localhost port `2222` with your public key (`~/.ssh/id_rsa.pub`) authorized:
+
+```bash
+docker run -d --name linuxscp-test-sshd \
+  -p 2222:2222 \
+  -e PUID=$(id -u) \
+  -e PGID=$(id -g) \
+  -e PUBLIC_KEY="$(cat ~/.ssh/id_rsa.pub)" \
+  -e USER_NAME=ubuntu \
+  lscr.io/linuxserver/openssh-server:latest
+```
+
+### Option B: Local KVM / Libvirt Ubuntu VM
+When running with the default libvirt test VM (`ubt26` at `192.168.122.10:22`, user `ubuntu`, key `~/.ssh/id_rsa`):
+
+```bash
+virsh start ubt26
+ssh -i ~/.ssh/id_rsa ubuntu@192.168.122.10 "echo SFTP target ready"
+```
+
+*Note: If the test target (`192.168.122.10:22`) is offline, live network integration tests gracefully detect the unreachable host without failing offline unit tests.*
+
+

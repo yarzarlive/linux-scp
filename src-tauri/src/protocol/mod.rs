@@ -1,3 +1,9 @@
+pub mod session_manager;
+pub mod sftp;
+
+pub use session_manager::{SessionManager, SessionStateSnapshot};
+pub use sftp::ConnectOutcome;
+
 use crate::errors::AppError;
 use crate::models::{
     FileEntry, FileMetadata, FileOwnership, ProtocolCapabilities, UnixPermissions,

@@ -89,6 +89,10 @@ impl Database {
             self.apply_migration_1()?;
         }
 
+        if current_version < 2 {
+            self.apply_migration_2()?;
+        }
+
         Ok(())
     }
 
@@ -140,6 +144,42 @@ impl Database {
 
         Ok(())
     }
+
+    fn apply_migration_2(&mut self) -> Result<(), AppError> {
+        let tx = self.conn.transaction().map_err(|e| {
+            AppError::Database(format!("Failed to start migration 2 transaction: {}", e))
+        })?;
+
+        tx.execute(
+            "CREATE TABLE IF NOT EXISTS known_hosts (
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                algorithm TEXT NOT NULL,
+                fingerprint_sha256 TEXT NOT NULL,
+                public_key_openssh TEXT NOT NULL,
+                trusted_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (host, port)
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("Migration 2 table creation failed: {}", e)))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at_ms) VALUES (2, ?1)",
+            [now],
+        )
+        .map_err(|e| AppError::Database(format!("Failed to record migration 2: {}", e)))?;
+
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("Failed to commit migration 2: {}", e)))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -155,7 +195,7 @@ mod tests {
                 r.get(0)
             })
             .expect("Should query version");
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
 
         // Verify table existence
         let count: i64 = db

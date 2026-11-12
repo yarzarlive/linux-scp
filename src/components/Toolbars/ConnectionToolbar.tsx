@@ -1,21 +1,32 @@
 import React from "react";
-import { PlusCircle, Server, Unplug, ShieldCheck, ShieldAlert } from "lucide-react";
+import { PlusCircle, Server, Unplug, RefreshCw, ShieldCheck, ShieldAlert } from "lucide-react";
+import { ConnectionSession } from "../../types/session";
 
 interface ConnectionToolbarProps {
   isConnected: boolean;
+  isConnecting?: boolean;
+  canReconnect?: boolean;
+  activeSession?: ConnectionSession | null;
   onNewSession?: () => void;
   onSiteManager?: () => void;
   onDisconnect?: () => void;
+  onReconnect?: () => void;
   hostKeyVerified?: boolean;
 }
 
 export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
   isConnected,
+  isConnecting = false,
+  canReconnect = false,
+  activeSession = null,
   onNewSession,
   onSiteManager,
   onDisconnect,
+  onReconnect,
   hostKeyVerified = true,
 }) => {
+  const canDisconnectOrCancel = isConnected || isConnecting;
+
   return (
     <div
       role="toolbar"
@@ -43,16 +54,41 @@ export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
           <span>Site Manager</span>
         </button>
 
+        {onReconnect && (
+          <button
+            type="button"
+            onClick={onReconnect}
+            disabled={!canReconnect || isConnecting}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors ${
+              canReconnect && !isConnecting
+                ? "bg-commander-dark hover:bg-commander-selected border-commander-border text-commander-text hover:text-white cursor-pointer"
+                : "bg-commander-dark/50 border-commander-border/40 text-commander-subtext/40 cursor-not-allowed"
+            }`}
+            title="Reconnect using the last active profile"
+          >
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-commander-accent ${isConnecting ? "animate-spin" : ""}`}
+            />
+            <span>Reconnect</span>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={onDisconnect}
-          disabled={!isConnected}
+          disabled={!canDisconnectOrCancel}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded border transition-colors ${
-            isConnected
+            canDisconnectOrCancel
               ? "bg-commander-dark hover:bg-rose-950/40 border-commander-border hover:border-rose-800 text-rose-300 cursor-pointer"
               : "bg-commander-dark/50 border-commander-border/40 text-commander-subtext/40 cursor-not-allowed"
           }`}
-          title={isConnected ? "Disconnect active session" : "No active session to disconnect"}
+          title={
+            isConnected
+              ? "Disconnect active session"
+              : isConnecting
+                ? "Cancel in-progress connection"
+                : "No active session to disconnect"
+          }
         >
           <Unplug className="w-3.5 h-3.5" />
           <span>Disconnect</span>
@@ -72,10 +108,22 @@ export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
         <div className="flex items-center gap-1.5">
           <span
             className={`w-2 h-2 rounded-full ${
-              isConnected ? "bg-emerald-500" : "bg-commander-subtext/40"
+              isConnected
+                ? "bg-emerald-500"
+                : isConnecting
+                  ? "bg-sky-400 animate-pulse"
+                  : "bg-commander-subtext/40"
             }`}
           />
-          <span>{isConnected ? "Remote Connected" : "Remote Disconnected"}</span>
+          <span>
+            {isConnected
+              ? activeSession
+                ? `Remote Connected (${activeSession.username}@${activeSession.host}:${activeSession.port})`
+                : "Remote Connected"
+              : isConnecting
+                ? "Connecting..."
+                : "Remote Disconnected"}
+          </span>
         </div>
       </div>
     </div>

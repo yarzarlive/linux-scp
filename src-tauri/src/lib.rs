@@ -14,6 +14,10 @@ use commands::profile::{
     check_keyring_status, delete_connection_profile, duplicate_connection_profile,
     get_connection_profile, list_connection_profiles, save_connection_profile,
 };
+use commands::session::{
+    connect_sftp_session, disconnect_sftp_session, get_session_state, list_known_hosts,
+    reconnect_sftp_session, trust_host_key,
+};
 use commands::system::{get_system_info, ping_backend};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,6 +26,7 @@ pub fn run() {
     tracing::info!("Starting LinuxSCP desktop application runtime...");
 
     tauri::Builder::default()
+        .manage(protocol::SessionManager::new())
         .invoke_handler(tauri::generate_handler![
             get_system_info,
             ping_backend,
@@ -37,6 +42,12 @@ pub fn run() {
             duplicate_connection_profile,
             delete_connection_profile,
             check_keyring_status,
+            connect_sftp_session,
+            disconnect_sftp_session,
+            reconnect_sftp_session,
+            get_session_state,
+            trust_host_key,
+            list_known_hosts,
         ])
         .run(tauri::generate_context!())
         .expect("Failed to run LinuxSCP application");
