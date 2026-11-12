@@ -46,3 +46,4 @@ describe("ConfirmDialog Component", () => {
     expect(handleCancel).toHaveBeenCalledTimes(1);
   });
 });
+

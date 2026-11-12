@@ -54,3 +54,4 @@ describe("ContextMenu Component", () => {
     expect(handleRename).toHaveBeenCalled();
   });
 });
+

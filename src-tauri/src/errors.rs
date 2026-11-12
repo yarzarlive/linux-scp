@@ -20,6 +20,9 @@ pub enum AppError {
     #[error("Security error: {0}")]
     Security(String),
 
+    #[error("Database error: {0}")]
+    Database(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }

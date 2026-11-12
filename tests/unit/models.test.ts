@@ -69,6 +69,10 @@ describe("Domain Models & Invariants", () => {
         preserve_permissions: true,
         concurrency_limit: 2,
       },
+      connection_settings: {
+        timeout_seconds: 30,
+        keepalive_interval_seconds: 15,
+      },
       created_at_ms: 1700000000,
       updated_at_ms: 1700000000,
     };

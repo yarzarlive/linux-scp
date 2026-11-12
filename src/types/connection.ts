@@ -11,6 +11,11 @@ export interface SudoSftpConfig {
   custom_command?: string;
 }
 
+export interface ProfileConnectionSettings {
+  timeout_seconds: number;
+  keepalive_interval_seconds?: number;
+}
+
 export interface ProfileTransferSettings {
   preserve_timestamps: boolean;
   preserve_permissions: boolean;
@@ -29,6 +34,18 @@ export interface ConnectionProfile {
   initial_remote_directory?: string;
   sudo_sftp: SudoSftpConfig;
   transfer_settings: ProfileTransferSettings;
+  connection_settings: ProfileConnectionSettings;
   created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface ConnectionProfileSummary {
+  id: string;
+  name: string;
+  protocol: ProtocolType;
+  host: string;
+  port: number;
+  username: string;
+  has_saved_secret: boolean;
   updated_at_ms: number;
 }

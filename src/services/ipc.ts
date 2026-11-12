@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ConnectionProfile, ConnectionProfileSummary } from "../types/connection";
 import { LocalDirectoryListing } from "../types/filesystem";
 import { AppError, PingResponse, SystemInfo } from "../types/ipc";
 
@@ -95,5 +96,56 @@ export class IpcClient {
     return this.invokeCommand<string[]>("delete_local_entries", {
       paths,
     });
+  }
+
+  /**
+   * Lists all saved connection profiles with secret presence indicators.
+   */
+  static async listConnectionProfiles(): Promise<ConnectionProfileSummary[]> {
+    return this.invokeCommand<ConnectionProfileSummary[]>("list_connection_profiles");
+  }
+
+  /**
+   * Retrieves a full connection profile configuration by id.
+   */
+  static async getConnectionProfile(id: string): Promise<ConnectionProfile> {
+    return this.invokeCommand<ConnectionProfile>("get_connection_profile", { id });
+  }
+
+  /**
+   * Saves or updates a connection profile and optionally stores its secret in Keyring.
+   */
+  static async saveConnectionProfile(
+    profile: ConnectionProfile,
+    secret?: string
+  ): Promise<ConnectionProfile> {
+    return this.invokeCommand<ConnectionProfile>("save_connection_profile", {
+      profile,
+      secret,
+    });
+  }
+
+  /**
+   * Duplicates an existing connection profile under a new name.
+   */
+  static async duplicateConnectionProfile(id: string, newName: string): Promise<ConnectionProfile> {
+    return this.invokeCommand<ConnectionProfile>("duplicate_connection_profile", {
+      id,
+      newName,
+    });
+  }
+
+  /**
+   * Deletes a connection profile and its associated Secret Service credential.
+   */
+  static async deleteConnectionProfile(id: string): Promise<void> {
+    return this.invokeCommand<void>("delete_connection_profile", { id });
+  }
+
+  /**
+   * Probes whether Linux Secret Service / Keyring storage is responsive.
+   */
+  static async checkKeyringStatus(): Promise<boolean> {
+    return this.invokeCommand<boolean>("check_keyring_status");
   }
 }

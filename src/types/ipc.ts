@@ -16,7 +16,13 @@ export interface PingResponse {
 }
 
 export type AppErrorKind =
-  "Validation" | "Filesystem" | "Protocol" | "Authentication" | "Security" | "Internal";
+  | "Validation"
+  | "Filesystem"
+  | "Protocol"
+  | "Authentication"
+  | "Security"
+  | "Database"
+  | "Internal";
 
 export interface AppError {
   kind: AppErrorKind;

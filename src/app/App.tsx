@@ -6,6 +6,7 @@ import { LocalPane } from "../components/FilePanel/LocalPane";
 import { RemotePane } from "../components/FilePanel/RemotePane";
 import { TransferQueue } from "../components/TransferQueue/TransferQueue";
 import { HorizontalSplitter, VerticalSplitter } from "../components/Common/Splitters";
+import { SiteManagerModal } from "../components/SiteManager/SiteManagerModal";
 import { IpcClient } from "../services/ipc";
 import { SystemInfo } from "../types/ipc";
 
@@ -14,6 +15,9 @@ export function App() {
   const [backendConnected, setBackendConnected] = useState<boolean>(false);
   const [pingLatencyMs, setPingLatencyMs] = useState<number | null>(null);
   const [activePane, setActivePane] = useState<"local" | "remote">("local");
+
+  // Site Manager modal visibility
+  const [siteManagerOpen, setSiteManagerOpen] = useState(false);
 
   // Pane width split percentage (default 50%)
   const [leftPanePercent, setLeftPanePercent] = useState<number>(50);
@@ -45,7 +49,6 @@ export function App() {
   // Splitter handlers
   const handleHorizontalResize = useCallback((deltaX: number) => {
     setLeftPanePercent((prev) => {
-      // Calculate delta as percentage of window width
       const windowWidth = window.innerWidth || 1024;
       const deltaPercent = (deltaX / windowWidth) * 100;
       const next = prev + deltaPercent;
@@ -69,8 +72,8 @@ export function App() {
       <ConnectionToolbar
         isConnected={false}
         hostKeyVerified={true}
-        onNewSession={() => {}}
-        onSiteManager={() => {}}
+        onNewSession={() => setSiteManagerOpen(true)}
+        onSiteManager={() => setSiteManagerOpen(true)}
         onDisconnect={() => {}}
       />
 
@@ -99,7 +102,7 @@ export function App() {
             <RemotePane
               isActivePane={activePane === "remote"}
               onFocusPane={() => setActivePane("remote")}
-              onConnect={() => {}}
+              onConnect={() => setSiteManagerOpen(true)}
             />
           </div>
         </div>
@@ -120,6 +123,16 @@ export function App() {
         systemInfo={systemInfo}
         backendConnected={backendConnected}
         pingLatencyMs={pingLatencyMs}
+      />
+
+      {/* 6. Site Manager Modal */}
+      <SiteManagerModal
+        isOpen={siteManagerOpen}
+        onClose={() => setSiteManagerOpen(false)}
+        onSelectAndConnect={(profile) => {
+          console.log("Profile selected for connection:", profile.name);
+          setSiteManagerOpen(false);
+        }}
       />
     </div>
   );

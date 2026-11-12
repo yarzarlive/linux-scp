@@ -6,7 +6,8 @@ pub mod transfer;
 
 pub use capabilities::{CapabilityError, ProtocolCapabilities};
 pub use connection::{
-    AuthMethod, ConnectionProfile, ProfileTransferSettings, ProtocolType, SudoSftpConfig,
+    AuthMethod, ConnectionProfile, ConnectionProfileSummary, ProfileConnectionSettings,
+    ProfileTransferSettings, ProtocolType, SudoSftpConfig,
 };
 pub use filesystem::{FileEntry, FileMetadata, FileOwnership, FileType, UnixPermissions};
 pub use session::{ConnectionSession, ElevationState, SessionId, SessionStatus};
