@@ -57,4 +57,43 @@ export class IpcClient {
   static async getHomeDirectory(): Promise<string> {
     return this.invokeCommand<string>("get_home_directory");
   }
+
+  /**
+   * Creates a new local directory.
+   */
+  static async createLocalDirectory(parentPath: string, dirName: string): Promise<string> {
+    return this.invokeCommand<string>("create_local_directory", {
+      parentPath,
+      dirName,
+    });
+  }
+
+  /**
+   * Creates a new local empty file.
+   */
+  static async createLocalFile(parentPath: string, fileName: string): Promise<string> {
+    return this.invokeCommand<string>("create_local_file", {
+      parentPath,
+      fileName,
+    });
+  }
+
+  /**
+   * Renames a local file or directory.
+   */
+  static async renameLocalEntry(sourcePath: string, newName: string): Promise<string> {
+    return this.invokeCommand<string>("rename_local_entry", {
+      sourcePath,
+      newName,
+    });
+  }
+
+  /**
+   * Deletes one or more local files or directories.
+   */
+  static async deleteLocalEntries(paths: string[]): Promise<string[]> {
+    return this.invokeCommand<string[]>("delete_local_entries", {
+      paths,
+    });
+  }
 }

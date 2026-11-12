@@ -15,6 +15,10 @@ interface FileTableProps {
   sortDirection: SortDirection;
   onSortChange: (column: SortColumn) => void;
   isLoading?: boolean;
+  onContextMenu?: (e: React.MouseEvent, entry?: FileEntry) => void;
+  onDeleteSelected?: () => void;
+  onRenameSelected?: () => void;
+  onNewFolder?: () => void;
 }
 
 export const FileTable: React.FC<FileTableProps> = ({
@@ -28,6 +32,10 @@ export const FileTable: React.FC<FileTableProps> = ({
   sortDirection,
   onSortChange,
   isLoading = false,
+  onContextMenu,
+  onDeleteSelected,
+  onRenameSelected,
+  onNewFolder,
 }) => {
   const tableRef = useRef<HTMLDivElement>(null);
   const lastClickedPathRef = useRef<string | null>(null);
@@ -119,6 +127,24 @@ export const FileTable: React.FC<FileTableProps> = ({
     }
   };
 
+  const handleRowContextMenu = (e: React.MouseEvent, entry: FileEntry) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // If clicked item is not already part of current selection, select it
+    if (!selectedPaths.has(entry.path)) {
+      lastClickedPathRef.current = entry.path;
+      onSelectionChange(new Set([entry.path]), entry.path);
+    }
+
+    onContextMenu?.(e, entry);
+  };
+
+  const handleContainerContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onContextMenu?.(e, undefined);
+  };
+
   // Keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (sortedEntries.length === 0) return;
@@ -157,6 +183,19 @@ export const FileTable: React.FC<FileTableProps> = ({
         }
         onSelectionChange(next, entry.path);
       }
+    } else if (e.key === "Delete") {
+      e.preventDefault();
+      if (selectedPaths.size > 0) {
+        onDeleteSelected?.();
+      }
+    } else if (e.key === "F2") {
+      e.preventDefault();
+      if (selectedPaths.size === 1) {
+        onRenameSelected?.();
+      }
+    } else if (e.key === "F7") {
+      e.preventDefault();
+      onNewFolder?.();
     }
   };
 
@@ -165,6 +204,7 @@ export const FileTable: React.FC<FileTableProps> = ({
       ref={tableRef}
       tabIndex={0}
       onKeyDown={handleKeyDown}
+      onContextMenu={handleContainerContextMenu}
       className="flex-1 flex flex-col min-h-0 bg-commander-surface focus:outline-none overflow-hidden select-none"
       role="region"
       aria-label="Files list"
@@ -190,6 +230,7 @@ export const FileTable: React.FC<FileTableProps> = ({
               isFocused={focusedPath === entry.path}
               onClick={handleRowClick}
               onDoubleClick={onOpenEntry}
+              onContextMenu={handleRowContextMenu}
             />
           ))
         )}

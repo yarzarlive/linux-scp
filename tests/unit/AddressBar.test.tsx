@@ -75,3 +75,4 @@ describe("AddressBar Component", () => {
     expect(handleToggleHidden).toHaveBeenCalled();
   });
 });
+

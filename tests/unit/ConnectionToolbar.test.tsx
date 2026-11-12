@@ -51,3 +51,4 @@ describe("ConnectionToolbar Component", () => {
     expect(handleDisconnect).toHaveBeenCalledTimes(1);
   });
 });
+

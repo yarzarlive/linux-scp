@@ -5,7 +5,10 @@ pub mod logging;
 pub mod models;
 pub mod protocol;
 
-use commands::filesystem::{get_home_directory, list_local_directory};
+use commands::filesystem::{
+    create_local_directory, create_local_file, delete_local_entries, get_home_directory,
+    list_local_directory, rename_local_entry,
+};
 use commands::system::{get_system_info, ping_backend};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,6 +22,10 @@ pub fn run() {
             ping_backend,
             list_local_directory,
             get_home_directory,
+            create_local_directory,
+            create_local_file,
+            rename_local_entry,
+            delete_local_entries,
         ])
         .run(tauri::generate_context!())
         .expect("Failed to run LinuxSCP application");

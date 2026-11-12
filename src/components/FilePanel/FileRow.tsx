@@ -16,6 +16,7 @@ interface FileRowProps {
   isFocused?: boolean;
   onClick: (e: React.MouseEvent, entry: FileEntry) => void;
   onDoubleClick: (entry: FileEntry) => void;
+  onContextMenu?: (e: React.MouseEvent, entry: FileEntry) => void;
 }
 
 export const FileRow: React.FC<FileRowProps> = ({
@@ -24,6 +25,7 @@ export const FileRow: React.FC<FileRowProps> = ({
   isFocused = false,
   onClick,
   onDoubleClick,
+  onContextMenu,
 }) => {
   const isDir = isDirectory(entry.file_type);
   const isSym = isSymlink(entry.file_type);
@@ -49,6 +51,7 @@ export const FileRow: React.FC<FileRowProps> = ({
       aria-selected={isSelected}
       onClick={(e) => onClick(e, entry)}
       onDoubleClick={() => onDoubleClick(entry)}
+      onContextMenu={(e) => onContextMenu?.(e, entry)}
       className={`flex items-center text-xs border-b border-commander-border/30 select-none cursor-pointer transition-colors ${
         isSelected
           ? "bg-commander-selected/80 text-white font-medium"
