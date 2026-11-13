@@ -14,6 +14,9 @@ vi.mock("../../src/services/ipc", () => ({
     renameRemoteEntry: vi.fn(),
     deleteRemoteFile: vi.fn(),
     deleteRemoteDirectory: vi.fn(),
+    openRemoteFileDefault: vi.fn(),
+    openRemoteFileWithApp: vi.fn(),
+    discoverDesktopApplications: vi.fn(),
   },
 }));
 
@@ -505,6 +508,64 @@ describe("RemotePane Component", () => {
       expect(IpcClient.deleteRemoteDirectory).toHaveBeenCalledTimes(2);
       expect(IpcClient.deleteRemoteDirectory).toHaveBeenLastCalledWith("/home/ubuntu/docs", true);
       expect(IpcClient.listRemoteDirectory).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("opens remote file via remembered default or falls back to Open With picker", async () => {
+    vi.mocked(IpcClient.listRemoteDirectory).mockResolvedValueOnce({
+      current_path: "/home/ubuntu",
+      parent_path: "/home",
+      home_path: "/home/ubuntu",
+      entries: [
+        {
+          name: "nginx.conf",
+          path: "/home/ubuntu/nginx.conf",
+          file_type: { type: "Regular" },
+          metadata: { size: 512, modified_at_secs: 1700000100 },
+          is_hidden: false,
+        },
+      ],
+    });
+    vi.mocked(IpcClient.openRemoteFileDefault).mockResolvedValueOnce({
+      outcome: "NeedsAppPicker",
+      extension_key: ".conf",
+      extension_display: ".conf",
+      missing_remembered_app_id: null,
+    });
+    vi.mocked(IpcClient.discoverDesktopApplications).mockResolvedValueOnce({
+      extension_key: ".conf",
+      extension_display: ".conf",
+      remembered_app_id: null,
+      remembered_app_installed: false,
+      recommended_app_ids: ["org.gnome.TextEditor.desktop"],
+      applications: [
+        {
+          id: "org.gnome.TextEditor.desktop",
+          name: "Text Editor",
+          comment: "Edit text files",
+          icon: null,
+          exec_raw: "gnome-text-editor %U",
+          executable: "/usr/bin/gnome-text-editor",
+          args_template: ["%U"],
+          mime_types: ["text/plain"],
+          categories: ["Utility"],
+          terminal: false,
+          desktop_file_path: "/usr/share/applications/org.gnome.TextEditor.desktop",
+        },
+      ],
+    });
+
+    render(<RemotePane sessionState={makeConnectedState()} />);
+    await waitFor(() => {
+      expect(screen.getByText("nginx.conf")).toBeInTheDocument();
+    });
+
+    fireEvent.doubleClick(screen.getByText("nginx.conf"));
+
+    await waitFor(() => {
+      expect(IpcClient.openRemoteFileDefault).toHaveBeenCalledWith("/home/ubuntu/nginx.conf");
+      expect(screen.getByText("Open With — Choose Application")).toBeInTheDocument();
+      expect(screen.getByText("Text Editor")).toBeInTheDocument();
     });
   });
 });

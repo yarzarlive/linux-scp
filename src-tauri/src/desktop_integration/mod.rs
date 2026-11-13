@@ -93,6 +93,37 @@ pub struct LocalFileLaunchResult {
     pub pid: Option<u32>,
 }
 
+/// Outcome of triggering the default `Open` action on a remote file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome")]
+#[allow(clippy::large_enum_variant)]
+pub enum RemoteFileOpenOutcome {
+    /// Remembered default application was found, remote file was downloaded into a managed
+    /// temporary working copy, and the desktop application was spawned.
+    Launched {
+        app: DesktopAppInfo,
+        extension_key: String,
+        pid: Option<u32>,
+        session: crate::remote_edit::RemoteEditSession,
+    },
+    /// No remembered default exists (or the remembered application was uninstalled); show the picker.
+    NeedsAppPicker {
+        extension_key: String,
+        extension_display: String,
+        missing_remembered_app_id: Option<String>,
+    },
+}
+
+/// Result of launching a remote file with an explicitly selected desktop application.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteFileLaunchResult {
+    pub app: DesktopAppInfo,
+    pub extension_key: String,
+    pub saved_as_default: bool,
+    pub pid: Option<u32>,
+    pub session: crate::remote_edit::RemoteEditSession,
+}
+
 /// Verified, shell-free process launch plan for a desktop application.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppLaunchPlan {

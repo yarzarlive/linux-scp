@@ -188,4 +188,74 @@ describe("OpenWithDialog Component", () => {
     });
     expect(handleClose).not.toHaveBeenCalled();
   });
+
+  it("launches remote file in remote mode via openRemoteFileWithApp", async () => {
+    vi.spyOn(IpcClient, "discoverDesktopApplications").mockResolvedValue({
+      extension_key: ".conf",
+      extension_display: ".conf",
+      remembered_app_id: null,
+      remembered_app_installed: false,
+      recommended_app_ids: ["org.gnome.TextEditor.desktop"],
+      applications: sampleApps,
+    });
+
+    const remoteSession = {
+      id: "11111111-1111-1111-1111-111111111111",
+      endpoint: { host: "srv.example", port: 22, username: "ubuntu", elevated: false },
+      profile_id: "prof-1",
+      remote_path: "/etc/nginx/nginx.conf",
+      file_name: "nginx.conf",
+      local_path: "/tmp/linuxscp/remote-edits/1111/work/nginx.conf",
+      app_id: "org.gnome.TextEditor.desktop",
+      app_name: "Text Editor",
+      baseline: { size: 512, modified_at_secs: 1700000100 },
+      baseline_sha256: "abc",
+      local_sha256: "abc",
+      state: { state: "Clean" as const },
+      prompt_dismissed: false,
+      has_unsynced_changes: false,
+      created_at_ms: 1700000000000,
+      last_synced_at_ms: 1700000000000,
+      upload_count: 0,
+      recovered: false,
+    };
+
+    const openRemoteSpy = vi.spyOn(IpcClient, "openRemoteFileWithApp").mockResolvedValue({
+      app: sampleApps[0],
+      extension_key: ".conf",
+      saved_as_default: false,
+      pid: 7777,
+      session: remoteSession,
+    });
+
+    const handleClose = vi.fn();
+    const handleRemoteLaunched = vi.fn();
+
+    render(
+      <OpenWithDialog
+        isOpen={true}
+        mode="remote"
+        filePath="/etc/nginx/nginx.conf"
+        fileName="nginx.conf"
+        onClose={handleClose}
+        onRemoteLaunched={handleRemoteLaunched}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Text Editor")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Open File/i }));
+
+    await waitFor(() => {
+      expect(openRemoteSpy).toHaveBeenCalledWith(
+        "/etc/nginx/nginx.conf",
+        "org.gnome.TextEditor.desktop",
+        false
+      );
+      expect(handleRemoteLaunched).toHaveBeenCalledTimes(1);
+      expect(handleClose).toHaveBeenCalledTimes(1);
+    });
+  });
 });

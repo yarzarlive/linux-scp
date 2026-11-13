@@ -5,6 +5,11 @@ import {
   LocalFileLaunchResult,
   LocalFileOpenOutcome,
   OpenWithContext,
+  RemoteEditSession,
+  RemoteEditUploadMode,
+  RemoteEditUploadOutcome,
+  RemoteFileLaunchResult,
+  RemoteFileOpenOutcome,
 } from "../types/desktop";
 import { FileOwnership, LocalDirectoryListing, RemoteDirectoryListing } from "../types/filesystem";
 import { AppError, PingResponse, SystemInfo } from "../types/ipc";
@@ -480,6 +485,122 @@ export class IpcClient {
   static async deleteFileAppAssociation(extension: string): Promise<void> {
     return this.invokeCommand<void>("delete_file_app_association", {
       extension,
+    });
+  }
+
+  /**
+   * Opens a remote file with its remembered default desktop application via a managed
+   * temporary working copy, or signals that the application picker is needed.
+   */
+  static async openRemoteFileDefault(remotePath: string): Promise<RemoteFileOpenOutcome> {
+    return this.invokeCommand<RemoteFileOpenOutcome>("open_remote_file_default", {
+      remotePath,
+    });
+  }
+
+  /**
+   * Downloads a remote file to a managed temporary working copy and opens it with the
+   * chosen desktop application, optionally remembering the default association.
+   */
+  static async openRemoteFileWithApp(
+    remotePath: string,
+    desktopAppId: string,
+    rememberDefault: boolean
+  ): Promise<RemoteFileLaunchResult> {
+    return this.invokeCommand<RemoteFileLaunchResult>("open_remote_file_with_app", {
+      remotePath,
+      desktopAppId,
+      rememberDefault,
+    });
+  }
+
+  /**
+   * Lists all tracked remote editing sessions after inspecting their local working copies.
+   */
+  static async listRemoteEditSessions(): Promise<RemoteEditSession[]> {
+    return this.invokeCommand<RemoteEditSession[]>("list_remote_edit_sessions");
+  }
+
+  /**
+   * Scans all tracked remote editing working copies immediately (e.g. on window focus)
+   * and returns the updated session list.
+   */
+  static async scanRemoteEditChanges(): Promise<RemoteEditSession[]> {
+    return this.invokeCommand<RemoteEditSession[]>("scan_remote_edit_changes");
+  }
+
+  /**
+   * Uploads a modified local working copy back to the remote server after checking for remote conflicts.
+   */
+  static async uploadRemoteEditSession(
+    sessionId: string,
+    overwriteRemoteChanges = false
+  ): Promise<RemoteEditUploadOutcome> {
+    return this.invokeCommand<RemoteEditUploadOutcome>("upload_remote_edit_session", {
+      sessionId,
+      overwriteRemoteChanges,
+    });
+  }
+
+  /**
+   * Dismisses the upload prompt for the current local modification while keeping the local working copy.
+   */
+  static async keepLocalRemoteEditChanges(sessionId: string): Promise<RemoteEditSession> {
+    return this.invokeCommand<RemoteEditSession>("keep_local_remote_edit_changes", {
+      sessionId,
+    });
+  }
+
+  /**
+   * Saves a copy of the local temporary working copy into `destinationDir` under a non-conflicting name.
+   */
+  static async saveRemoteEditLocalCopy(sessionId: string, destinationDir: string): Promise<string> {
+    return this.invokeCommand<string>("save_remote_edit_local_copy", {
+      sessionId,
+      destinationDir,
+    });
+  }
+
+  /**
+   * Discards a tracked remote editing session and cleans up its temporary working copy directory.
+   */
+  static async discardRemoteEditSession(
+    sessionId: string,
+    discardLocalChanges = false
+  ): Promise<void> {
+    return this.invokeCommand<void>("discard_remote_edit_session", {
+      sessionId,
+      discardLocalChanges,
+    });
+  }
+
+  /**
+   * Replaces the local temporary working copy of a remote editing session with the latest
+   * version from the remote server and optionally relaunches its associated desktop app.
+   */
+  static async reloadRemoteEditFromRemote(
+    sessionId: string,
+    relaunchApp = true
+  ): Promise<RemoteEditSession> {
+    return this.invokeCommand<RemoteEditSession>("reload_remote_edit_from_remote", {
+      sessionId,
+      relaunchApp,
+    });
+  }
+
+  /**
+   * Gets the configured upload-back mode for remote editing sessions ("auto" or "prompt").
+   */
+  static async getRemoteEditUploadMode(): Promise<RemoteEditUploadMode> {
+    return this.invokeCommand<RemoteEditUploadMode>("get_remote_edit_upload_mode");
+  }
+
+  /**
+   * Sets and persists the upload-back mode for remote editing sessions ("auto" or "prompt").
+   */
+  static async setRemoteEditUploadMode(mode: RemoteEditUploadMode): Promise<RemoteEditUploadMode> {
+    return this.invokeCommand<RemoteEditUploadMode>("set_remote_edit_upload_mode", {
+      mode,
     });
   }
 }

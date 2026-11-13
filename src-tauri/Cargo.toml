@@ -30,6 +30,7 @@ keyring = "4.2.0"
 rusqlite = { version = "0.42.0", features = ["bundled"] }
 russh = "0.65.1"
 russh-sftp = "3.0.1"
+sha2 = "0.10.9"
 
 [dev-dependencies]
 tokio-test = "0.4"

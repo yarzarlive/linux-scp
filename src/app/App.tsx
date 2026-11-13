@@ -12,9 +12,11 @@ import { HorizontalSplitter, VerticalSplitter } from "../components/Common/Split
 import { SiteManagerModal } from "../components/SiteManager/SiteManagerModal";
 import { HostKeyPromptModal } from "../components/SiteManager/HostKeyPromptModal";
 import { TerminalSettingsModal } from "../components/TerminalSettings/TerminalSettingsModal";
+import { RemoteEditPanel } from "../components/RemoteEditPanel/RemoteEditPanel";
 import { IpcClient } from "../services/ipc";
 import { SystemInfo } from "../types/ipc";
 import { ConnectionProfile } from "../types/connection";
+import { RemoteEditSession, RemoteEditUploadMode } from "../types/desktop";
 import { ConnectOutcome, SessionStateSnapshot } from "../types/session";
 import {
   ConflictDecision,
@@ -70,6 +72,27 @@ export function App() {
   const [transferJobs, setTransferJobs] = useState<TransferJob[]>([]);
   const [conflictQueue, setConflictQueue] = useState<TransferConflictPrompt[]>([]);
   const [activeDrag, setActiveDrag] = useState<InternalDragPayload | null>(null);
+  const [remoteEditSessions, setRemoteEditSessions] = useState<RemoteEditSession[]>([]);
+  const [remoteEditUploadMode, setRemoteEditUploadMode] = useState<RemoteEditUploadMode>("auto");
+
+  const upsertRemoteEditSession = useCallback((session: RemoteEditSession) => {
+    let didAutoUpload = false;
+    setRemoteEditSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === session.id);
+      if (idx >= 0) {
+        if (session.upload_count > prev[idx].upload_count) {
+          didAutoUpload = true;
+        }
+        const next = [...prev];
+        next[idx] = session;
+        return next;
+      }
+      return [...prev, session];
+    });
+    if (didAutoUpload) {
+      setRemoteRefreshTrigger((prev) => prev + 1);
+    }
+  }, []);
 
   // Initial startup probe
   useEffect(() => {
@@ -106,6 +129,15 @@ export function App() {
 
         const existingTransfers = await IpcClient.listTransfers();
         setTransferJobs(existingTransfers);
+
+        try {
+          const existingEdits = await IpcClient.listRemoteEditSessions();
+          setRemoteEditSessions(existingEdits);
+          const mode = await IpcClient.getRemoteEditUploadMode();
+          setRemoteEditUploadMode(mode);
+        } catch {
+          // Ignore if remote edit sessions cannot be fetched on startup
+        }
       } catch (err) {
         console.error("IPC initialization error:", err);
         setBackendConnected(false);
@@ -172,6 +204,19 @@ export function App() {
           setConflictQueue((prev) => [...prev, event.payload]);
         });
         unlisteners.push(u3);
+
+        const u4 = await listen<RemoteEditSession>("remote-edit://updated", (event) => {
+          if (!active) return;
+          upsertRemoteEditSession(event.payload);
+        });
+        unlisteners.push(u4);
+
+        const u5 = await listen<string>("remote-edit://removed", (event) => {
+          if (!active) return;
+          const removedId = event.payload;
+          setRemoteEditSessions((prev) => prev.filter((s) => s.id !== removedId));
+        });
+        unlisteners.push(u5);
       } catch {
         // Non-Tauri unit test environment
       }
@@ -183,6 +228,23 @@ export function App() {
       for (const unlisten of unlisteners) {
         unlisten();
       }
+    };
+  }, [upsertRemoteEditSession]);
+
+  // Scan tracked remote edit working copies immediately when user returns to LinuxSCP window
+  useEffect(() => {
+    const handleFocus = () => {
+      void IpcClient.scanRemoteEditChanges()
+        .then((sessions) => {
+          setRemoteEditSessions(sessions);
+        })
+        .catch(() => {
+          // Ignore focus scan errors in non-Tauri environments
+        });
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 
@@ -474,6 +536,65 @@ export function App() {
     []
   );
 
+  const handleUploadRemoteEdit = useCallback(
+    async (sessionId: string, overwriteRemoteChanges: boolean) => {
+      const outcome = await IpcClient.uploadRemoteEditSession(sessionId, overwriteRemoteChanges);
+      upsertRemoteEditSession(outcome.session);
+      if (outcome.outcome === "Uploaded") {
+        setRemoteRefreshTrigger((prev) => prev + 1);
+      }
+    },
+    [upsertRemoteEditSession]
+  );
+
+  const handleKeepLocalRemoteEdit = useCallback(
+    async (sessionId: string) => {
+      const updated = await IpcClient.keepLocalRemoteEditChanges(sessionId);
+      upsertRemoteEditSession(updated);
+    },
+    [upsertRemoteEditSession]
+  );
+
+  const handleSaveRemoteEditCopy = useCallback(
+    async (sessionId: string, destinationDir: string): Promise<string | null> => {
+      const targetDir = destinationDir || localCurrentPath || "/tmp";
+      const savedPath = await IpcClient.saveRemoteEditLocalCopy(sessionId, targetDir);
+      setLocalRefreshTrigger((prev) => prev + 1);
+      return savedPath;
+    },
+    [localCurrentPath]
+  );
+
+  const handleDiscardRemoteEdit = useCallback(
+    async (sessionId: string, discardLocalChanges: boolean) => {
+      await IpcClient.discardRemoteEditSession(sessionId, discardLocalChanges);
+      setRemoteEditSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    },
+    []
+  );
+
+  const handleReloadRemoteEditFromRemote = useCallback(
+    async (sessionId: string) => {
+      const updated = await IpcClient.reloadRemoteEditFromRemote(sessionId, true);
+      upsertRemoteEditSession(updated);
+    },
+    [upsertRemoteEditSession]
+  );
+
+  const handleChangeRemoteEditUploadMode = useCallback(async (mode: RemoteEditUploadMode) => {
+    const saved = await IpcClient.setRemoteEditUploadMode(mode);
+    setRemoteEditUploadMode(saved);
+    if (saved === "auto") {
+      const sessions = await IpcClient.scanRemoteEditChanges();
+      setRemoteEditSessions(sessions);
+    }
+  }, []);
+
+  const handleScanRemoteEdits = useCallback(async () => {
+    const sessions = await IpcClient.scanRemoteEditChanges();
+    setRemoteEditSessions(sessions);
+  }, []);
+
   return (
     <div
       onDragOver={(e) => {
@@ -555,6 +676,24 @@ export function App() {
         </div>
       )}
 
+      {/* 2b. Tracked Remote File Editing Sessions Banner */}
+      <RemoteEditPanel
+        sessions={remoteEditSessions}
+        isConnected={isConnected}
+        localCurrentDir={localCurrentPath}
+        uploadMode={remoteEditUploadMode}
+        onChangeUploadMode={handleChangeRemoteEditUploadMode}
+        onUploadSession={handleUploadRemoteEdit}
+        onKeepLocalChanges={handleKeepLocalRemoteEdit}
+        onSaveLocalCopy={handleSaveRemoteEditCopy}
+        onDiscardSession={handleDiscardRemoteEdit}
+        onReloadFromRemote={handleReloadRemoteEditFromRemote}
+        onDownloadNewerRemote={async (remotePath, destDir) => {
+          await handleDownload([remotePath], destDir || localCurrentPath);
+        }}
+        onScanNow={handleScanRemoteEdits}
+      />
+
       {/* 3. Commander Dual-Pane Working Area */}
       <main className="flex-1 flex flex-col p-1.5 gap-1.5 min-h-0 overflow-hidden">
         <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -600,6 +739,7 @@ export function App() {
               onInternalDragStart={setActiveDrag}
               onInternalDragEnd={() => setActiveDrag(null)}
               refreshTrigger={remoteRefreshTrigger}
+              onRemoteEditOpened={upsertRemoteEditSession}
             />
           </div>
         </div>

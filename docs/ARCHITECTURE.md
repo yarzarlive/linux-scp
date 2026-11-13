@@ -108,3 +108,36 @@ If unsupported, an explicit `CapabilityError::UnsupportedOperation` is returned,
 3. **No Shell Interpolation:** Desktop applications and external commands are spawned via `std::process::Command` using structured argument vectors, eliminating shell injection vulnerabilities.
 4. **Internal Drag-and-Drop Only:** Drag-and-drop operations are bounded strictly between LinuxSCP's local and remote panes; desktop file dropping is unsupported.
 
+---
+
+## 5. Remote File Editing & Temporary Working-Copy Lifecycle
+
+When a user selects **Open** or **Open With...** on a remote file, LinuxSCP manages a private local working copy through `RemoteEditManager`:
+
+### 5.1 Workspace Layout & Permissions
+Working copies live under `$XDG_STATE_HOME/linuxscp/remote-edits/<session-uuid>/` (falling back to `~/.local/share/linuxscp/remote-edits/<session-uuid>/`):
+- All directories are created and verified with Unix mode `0700` owned by the current UID; symlinks and foreign-owned directories are rejected.
+- `session.json` (mode `0600`): non-secret manifest recording remote endpoint identity (`host`, `port`, `username`, `elevated`), canonical `remote_path`, baseline `RemoteFileFingerprint` (`size`, `modified_at_secs`, `permissions_mode`, `uid`, `gid`), and `baseline_sha256`.
+- `work/<filename>` (mode `0600`): the local working copy passed to the selected desktop application.
+- `scratch/` (mode `0700`): transient staging files for atomic downloads, upload snapshots, and content verification, removed immediately after each operation.
+
+`$XDG_STATE_HOME` is chosen deliberately over `$XDG_RUNTIME_DIR` (`tmpfs`) so that unsynced local edits survive unexpected logouts, disconnects, or crashes.
+
+### 5.2 Change Detection & Conflict Safety
+- **Process-Independent Detection:** LinuxSCP never assumes that a desktop launcher process exiting means the file was saved or closed (e.g., VS Code or GNOME Text Editor single-instance launchers exit immediately while the window stays open). Instead, it monitors `work/<filename>` via background stat/hash polling (with a stability debounce window so atomic-rename saves and multi-write saves settle first) plus an immediate scan whenever the LinuxSCP window regains focus.
+- **Upload Mode (`Auto` by default, configurable to `Prompt`):** When a local modification settles and `RemoteEditUploadMode` is `Auto` (persisted in SQLite `app_preferences` under `remote_edit.upload_mode`), `scan_local_changes` automatically triggers a conflict-checked upload (`upload(..., overwrite_remote_changes = false)`). Users can switch to `Prompt` mode via the **Auto-upload on save** toggle in the `RemoteEditPanel` header if they prefer manual confirmation before each upload.
+- **No Unchanged Uploads:** If the working copy's SHA-256 equals `baseline_sha256` (including when an editor re-saves identical content), the session remains `Clean` and no upload occurs.
+- **Endpoint Binding:** Before uploading, LinuxSCP verifies that the active session matches the recorded `RemoteEndpointIdentity` (`host`, `port`, `username`, `elevated`), preventing a working copy from being uploaded to a different server after a reconnect.
+- **Remote Conflict Check:** Before uploading (unless the user explicitly confirms overwriting a reported conflict), LinuxSCP re-stats the remote path and compares `(size, modified_at_secs)` against the baseline, supplemented by a remote content SHA-256 check for files up to 16 MiB. If the remote file changed, was deleted, or lacks verifiable metadata, the session enters `Conflict` and is **never** overwritten automatically.
+- **Re-opening & Reloading Remote Changes:** When a user opens a remote file that already has an active session (`refresh_existing`), LinuxSCP first scans `work/<filename>` for local edits. If the local working copy is `Clean`, it runs `verify_remote_unchanged` (fingerprint + content SHA-256) and automatically re-downloads the newer remote content into `work/<filename>` before launching the editor. If the local working copy has unsynced edits and the remote file also changed externally, the session transitions to `Conflict` (preserving the local working copy) and offers **Load Remote Version** (`reload_remote_edit_from_remote`) to pull the latest remote file and reopen it in the editor.
+
+### 5.3 Temporary-File Cleanup Lifecycle
+1. **Failed or Cancelled Download:** If the initial download or baseline verification fails, `<session-uuid>/` is removed immediately before any application is launched.
+2. **Scratch Files:** `scratch/*.part` files created during download, upload snapshotting, or remote hash verification are removed in a `finally`-style cleanup block as soon as the operation finishes.
+3. **Explicit Close / Discard:**
+   - If the session is `Clean` (`local_sha256 == baseline_sha256`), **Close & Clean Up** removes `<session-uuid>/` immediately without prompting.
+   - If the session has unsynced local changes (`Modified`, `Conflict`, `UploadFailed`, or `LocalMissing`), `discard` refuses unless the user explicitly confirms `discard_local_changes = true`.
+4. **Application Exit (`cleanup_on_exit`):** When the LinuxSCP window closes, every session marked `Clean` has its working copy re-hashed on disk; only sessions whose on-disk SHA-256 still matches `baseline_sha256` are deleted. Any session with unsynced local edits, a conflict, or a failed upload is **preserved** on disk.
+5. **Application Startup (`restore_from_disk`):** On startup, LinuxSCP scans `remote-edits/`. Directories without a `session.json` manifest (incomplete downloads) are removed; valid sessions are restored with `recovered = true` and immediately scanned so the user can upload, save a copy, or discard their preserved edits.
+
+

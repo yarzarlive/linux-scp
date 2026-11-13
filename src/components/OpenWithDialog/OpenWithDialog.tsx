@@ -11,15 +11,22 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { IpcClient } from "../../services/ipc";
-import { DesktopAppInfo, LocalFileLaunchResult, OpenWithContext } from "../../types/desktop";
+import {
+  DesktopAppInfo,
+  LocalFileLaunchResult,
+  OpenWithContext,
+  RemoteFileLaunchResult,
+} from "../../types/desktop";
 
 interface OpenWithDialogProps {
   isOpen: boolean;
   filePath: string | null;
   fileName: string | null;
   missingRememberedAppId?: string | null;
+  mode?: "local" | "remote";
   onClose: () => void;
   onLaunched?: (result: LocalFileLaunchResult) => void;
+  onRemoteLaunched?: (result: RemoteFileLaunchResult) => void;
 }
 
 export const OpenWithDialog: React.FC<OpenWithDialogProps> = ({
@@ -27,8 +34,10 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps> = ({
   filePath,
   fileName,
   missingRememberedAppId = null,
+  mode = "local",
   onClose,
   onLaunched,
+  onRemoteLaunched,
 }) => {
   const [context, setContext] = useState<OpenWithContext | null>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
@@ -126,8 +135,17 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps> = ({
     setIsLaunching(true);
     setErrorMessage(null);
     try {
-      const result = await IpcClient.openLocalFileWithApp(filePath, targetAppId, rememberDefault);
-      onLaunched?.(result);
+      if (mode === "remote") {
+        const result = await IpcClient.openRemoteFileWithApp(
+          filePath,
+          targetAppId,
+          rememberDefault
+        );
+        onRemoteLaunched?.(result);
+      } else {
+        const result = await IpcClient.openLocalFileWithApp(filePath, targetAppId, rememberDefault);
+        onLaunched?.(result);
+      }
       onClose();
     } catch (err: unknown) {
       const msg =
@@ -392,11 +410,14 @@ export const OpenWithDialog: React.FC<OpenWithDialogProps> = ({
             disabled={!selectedAppId || isLaunching || isLoading}
             className="px-4 py-1.5 text-xs rounded font-medium bg-commander-accent hover:bg-commander-accent/90 text-commander-dark transition-colors disabled:opacity-50 cursor-pointer"
           >
-            {isLaunching ? "Opening..." : "Open File"}
+            {isLaunching
+              ? mode === "remote"
+                ? "Downloading & Opening..."
+                : "Opening..."
+              : "Open File"}
           </button>
         </div>
       </div>
     </div>
   );
 };
-

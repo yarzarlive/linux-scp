@@ -26,8 +26,10 @@ import { ContextMenu, ContextMenuPosition } from "./ContextMenu";
 import { InputDialog } from "../Common/InputDialog";
 import { ConfirmDialog } from "../Common/ConfirmDialog";
 import { PropertiesDialog } from "../PropertiesDialog/PropertiesDialog";
+import { OpenWithDialog } from "../OpenWithDialog/OpenWithDialog";
 import { PaneDropIndicator } from "./PaneDropIndicator";
 import { FileEntry } from "../../types/filesystem";
+import { RemoteEditSession } from "../../types/desktop";
 import { SessionStateSnapshot } from "../../types/session";
 import { AppError } from "../../types/ipc";
 import { IpcClient } from "../../services/ipc";
@@ -57,6 +59,7 @@ interface RemotePaneProps {
   isActivePane?: boolean;
   onFocusPane?: () => void;
   refreshTrigger?: number;
+  onRemoteEditOpened?: (session: RemoteEditSession) => void;
 }
 
 type RemoteErrorKind = "PermissionDenied" | "Network" | "Other";
@@ -103,6 +106,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   isActivePane = false,
   onFocusPane,
   refreshTrigger = 0,
+  onRemoteEditOpened,
 }) => {
   const statusKind = sessionState.status.status;
   const activeSession = statusKind === "Connected" ? sessionState.session : null;
@@ -138,6 +142,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [isOperating, setIsOperating] = useState(false);
   const [contextMenuPos, setContextMenuPos] = useState<ContextMenuPosition | null>(null);
+  const [openWithTarget, setOpenWithTarget] = useState<{
+    path: string;
+    name: string;
+    missingAppId?: string | null;
+  } | null>(null);
 
   const loadedSessionIdRef = useRef<string | null>(null);
   const requestSeqRef = useRef<number>(0);
@@ -319,11 +328,39 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         const targetIsDir = await IpcClient.checkRemotePathIsDir(entry.path);
         if (targetIsDir) {
           loadDirectory(entry.path, true);
+          return;
         }
       } catch (err) {
         setRemoteError(classifyRemoteError(err, entry.path));
+        return;
       }
     }
+
+    setRemoteError(null);
+    try {
+      const outcome = await IpcClient.openRemoteFileDefault(entry.path);
+      if (outcome.outcome === "NeedsAppPicker") {
+        setOpenWithTarget({
+          path: entry.path,
+          name: entry.name,
+          missingAppId: outcome.missing_remembered_app_id ?? null,
+        });
+      } else if (outcome.outcome === "Launched") {
+        onRemoteEditOpened?.(outcome.session);
+      }
+    } catch (err) {
+      setRemoteError(classifyRemoteError(err, entry.path));
+    }
+  };
+
+  const handleOpenWithEntry = (entry: FileEntry) => {
+    if (isDirectory(entry.file_type)) return;
+    setRemoteError(null);
+    setOpenWithTarget({
+      path: entry.path,
+      name: entry.name,
+      missingAppId: null,
+    });
   };
 
   const summary = useMemo(() => {
@@ -1030,13 +1067,29 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         hasSelection={selectedPaths.size > 0}
         isSingleSelection={selectedPaths.size === 1}
         isDirectorySelection={!!singleSelectedEntry && isDirectory(singleSelectedEntry.file_type)}
-        onOpen={singleSelectedEntry ? () => handleOpenEntry(singleSelectedEntry) : undefined}
+        onOpen={singleSelectedEntry ? () => void handleOpenEntry(singleSelectedEntry) : undefined}
+        onOpenWith={
+          singleSelectedEntry && !isDirectory(singleSelectedEntry.file_type)
+            ? () => handleOpenWithEntry(singleSelectedEntry)
+            : undefined
+        }
         onNewFolder={canCreateDir ? handleOpenCreateDir : undefined}
         onNewFile={canCreateFile ? handleOpenCreateFile : undefined}
         onRename={canRename && singleSelectedEntry ? handleOpenRename : undefined}
         onDelete={canDeleteSelected ? handleOpenDelete : undefined}
         onProperties={canOpenProperties ? () => setPropertiesOpen(true) : undefined}
         onRefresh={handleRefresh}
+      />
+
+      {/* Remote Open With Application Picker Dialog */}
+      <OpenWithDialog
+        isOpen={Boolean(openWithTarget)}
+        mode="remote"
+        filePath={openWithTarget?.path ?? null}
+        fileName={openWithTarget?.name ?? null}
+        missingRememberedAppId={openWithTarget?.missingAppId}
+        onRemoteLaunched={(result) => onRemoteEditOpened?.(result.session)}
+        onClose={() => setOpenWithTarget(null)}
       />
 
       {/* Remote Properties / Permissions / Ownership Dialog */}

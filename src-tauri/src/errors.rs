@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Unified typed error model for all LinuxSCP IPC commands.
-#[derive(Debug, Error, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "message")]
 pub enum AppError {
     #[error("Validation error: {0}")]
