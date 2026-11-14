@@ -803,27 +803,91 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                     )}
 
                     {formProfile.sudo_sftp.enabled && formProfile.protocol === "SFTP" && (
-                      <div>
-                        <label className="block text-commander-subtext mb-1">
-                          Custom Sudo SFTP Server Command
-                        </label>
-                        <input
-                          type="text"
-                          value={
-                            formProfile.sudo_sftp.custom_command ??
-                            "sudo -n /usr/lib/openssh/sftp-server"
-                          }
-                          onChange={(e) =>
-                            setFormProfile({
-                              ...formProfile,
-                              sudo_sftp: {
-                                ...formProfile.sudo_sftp,
-                                custom_command: e.target.value.trim() || undefined,
-                              },
-                            })
-                          }
-                          className="w-full px-2.5 py-1 text-xs font-mono bg-commander-dark border border-commander-border rounded text-commander-text focus:outline-none focus:border-commander-accent"
-                        />
+                      <div className="space-y-2.5 pt-1">
+                        <div>
+                          <label className="block text-commander-subtext mb-1">
+                            Remote SFTP Server Binary Path
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="/usr/lib/openssh/sftp-server"
+                            value={
+                              formProfile.sudo_sftp.sftp_server_path ??
+                              (formProfile.sudo_sftp.custom_command
+                                ? ""
+                                : "/usr/lib/openssh/sftp-server")
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value.trim();
+                              setFormProfile({
+                                ...formProfile,
+                                sudo_sftp: {
+                                  ...formProfile.sudo_sftp,
+                                  sftp_server_path: val || undefined,
+                                  custom_command: val ? `sudo -n ${val}` : undefined,
+                                },
+                              });
+                            }}
+                            className="w-full px-2.5 py-1 text-xs font-mono bg-commander-dark border border-commander-border rounded text-commander-text focus:outline-none focus:border-commander-accent"
+                          />
+                          <p className="text-[10px] text-commander-subtext mt-0.5">
+                            Common paths: Ubuntu/Debian: <code>/usr/lib/openssh/sftp-server</code>,
+                            RHEL/Fedora/Arch: <code>/usr/libexec/openssh/sftp-server</code>.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-commander-subtext mb-1">
+                            Executed Sudo Command (non-interactive)
+                          </label>
+                          <input
+                            type="text"
+                            value={
+                              formProfile.sudo_sftp.custom_command ??
+                              (formProfile.sudo_sftp.sftp_server_path
+                                ? `sudo -n ${formProfile.sudo_sftp.sftp_server_path}`
+                                : "sudo -n /usr/lib/openssh/sftp-server")
+                            }
+                            onChange={(e) =>
+                              setFormProfile({
+                                ...formProfile,
+                                sudo_sftp: {
+                                  ...formProfile.sudo_sftp,
+                                  custom_command: e.target.value.trim() || undefined,
+                                },
+                              })
+                            }
+                            className="w-full px-2.5 py-1 text-xs font-mono bg-commander-dark border border-commander-border rounded text-commander-text focus:outline-none focus:border-commander-accent"
+                          />
+                        </div>
+
+                        {/* Sudoers Requirement Guidance Box */}
+                        <div className="p-2.5 rounded bg-amber-950/40 border border-amber-800/60 text-[11px] text-amber-200/95 space-y-1.5">
+                          <p className="font-semibold text-amber-300">
+                            Server-side sudoers configuration required:
+                          </p>
+                          <p>
+                            LinuxSCP connects the SFTP protocol stream to a dedicated sudo process.
+                            Because interactive password prompts corrupt binary SFTP protocol bytes,
+                            the remote user must be permitted to run the exact binary with{" "}
+                            <code>NOPASSWD</code>.
+                          </p>
+                          <div className="font-mono text-[10px] bg-black/50 p-1.5 rounded border border-amber-700/40 select-all">
+                            {formProfile.username || "&lt;user&gt;"} ALL=(root) NOPASSWD:{" "}
+                            {formProfile.sudo_sftp.sftp_server_path ||
+                              (formProfile.sudo_sftp.custom_command
+                                ? formProfile.sudo_sftp.custom_command.replace(
+                                    /^sudo\s+(-n\s+)?/,
+                                    ""
+                                  )
+                                : "/usr/lib/openssh/sftp-server")}
+                          </div>
+                          <p className="text-[10px] text-amber-300/80">
+                            ⚠️ Never configure unrestricted <code>NOPASSWD: ALL</code>. LinuxSCP
+                            does not modify remote sudoers automatically. OpenSSH{" "}
+                            <code>internal-sftp</code> daemon mode cannot be elevated.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>

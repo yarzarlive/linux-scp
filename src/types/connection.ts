@@ -8,6 +8,7 @@ export type AuthMethod =
 
 export interface SudoSftpConfig {
   enabled: boolean;
+  sftp_server_path?: string;
   custom_command?: string;
 }
 

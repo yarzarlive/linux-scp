@@ -568,4 +568,91 @@ describe("RemotePane Component", () => {
       expect(screen.getByText("Text Editor")).toBeInTheDocument();
     });
   });
+
+  it("renders honest transfer-only SCP view when connected via SCP without listing directory", async () => {
+    const handleDownload = vi.fn();
+    const handleDirectoryChange = vi.fn();
+
+    const scpState: SessionStateSnapshot = {
+      status: { status: "Connected" },
+      session: {
+        session_id: "sess-scp-1",
+        profile_id: "prof-scp-1",
+        protocol: "SCP",
+        host: "192.168.122.10",
+        port: 22,
+        username: "ubuntu",
+        status: { status: "Connected" },
+        elevation: { type: "None" },
+        current_remote_path: "/home/ubuntu",
+        home_remote_path: "/home/ubuntu",
+        capabilities: {
+          protocol: "SCP",
+          can_list_directory: false,
+          can_stat_metadata: false,
+          can_upload: true,
+          can_download: true,
+          can_create_file: false,
+          can_create_directory: false,
+          can_rename: false,
+          can_delete_file: false,
+          can_delete_directory: false,
+          can_set_permissions: false,
+          can_set_owner_group: false,
+          can_elevate_sudo: false,
+          can_preserve_timestamps: true,
+          can_resume_transfer: false,
+          can_symlink: false,
+        },
+        last_active_ms: 1700000000000,
+      },
+      trusted_host_key: {
+        host: "192.168.122.10",
+        port: 22,
+        algorithm: "ssh-ed25519",
+        fingerprint_sha256: "SHA256:VerifiedKey12345",
+        public_key_openssh: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...",
+        trusted_at_ms: 1700000000000,
+      },
+    };
+
+    render(
+      <RemotePane
+        sessionState={scpState}
+        onDownload={handleDownload}
+        onDirectoryChange={handleDirectoryChange}
+      />
+    );
+
+    // Verify listRemoteDirectory is NEVER called for SCP session
+    expect(IpcClient.listRemoteDirectory).not.toHaveBeenCalled();
+
+    // Verify SCP Protocol badge and panel are rendered
+    expect(screen.getByText("SCP (TRANSFER-ONLY)")).toBeInTheDocument();
+    const scpPanel = screen.getByTestId("scp-transfer-panel");
+    expect(scpPanel).toBeInTheDocument();
+    expect(within(scpPanel).getByText(/SCP Protocol Active • Transfer-Only Mode/)).toBeInTheDocument();
+
+    // Verify unsupported operation buttons are not rendered
+    expect(screen.queryByTitle(/New Remote Folder/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/New Remote File/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Rename Selected Remote Item/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Delete Selected Remote Items/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Remote File Properties/)).not.toBeInTheDocument();
+
+    // Verify status bar surfaces SCP capability limitations honestly
+    expect(
+      screen.getByText(/SCP Mode • Direct transfer queue only \(Browsing & file management unsupported\)/)
+    ).toBeInTheDocument();
+
+    // Verify direct download triggers onDownload with exact path
+    const downloadInput = within(scpPanel).getByPlaceholderText("/remote/path/to/file.ext");
+    expect(downloadInput).toBeInTheDocument();
+
+    fireEvent.change(downloadInput, { target: { value: "/etc/os-release" } });
+    const downloadBtn = within(scpPanel).getByRole("button", { name: "Download" });
+    fireEvent.click(downloadBtn);
+
+    expect(handleDownload).toHaveBeenCalledWith(["/etc/os-release"]);
+  });
 });

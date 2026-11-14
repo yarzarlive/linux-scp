@@ -188,4 +188,21 @@ describe("SiteManagerModal Component", () => {
       expect(onOpenTerminal).toHaveBeenCalledWith(mockFullProfile1);
     });
   });
+
+  it("displays narrow sudoers instruction and binary path field when sudo-SFTP is enabled", async () => {
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Production Web")).toBeInTheDocument();
+    });
+
+    // Check sudo-sftp checkbox is checked (from mockFullProfile1)
+    const sudoCheck = screen.getByLabelText(/Enable Sudo-SFTP External Server Elevation/i);
+    expect(sudoCheck).toBeChecked();
+
+    // Check guidance text and sudoers rule
+    expect(screen.getByText(/Server-side sudoers configuration required:/i)).toBeInTheDocument();
+    expect(screen.getByText(/deploy ALL=\(root\) NOPASSWD: \/usr\/lib\/openssh\/sftp-server/i)).toBeInTheDocument();
+    expect(screen.getByText(/Never configure unrestricted/i)).toBeInTheDocument();
+  });
 });

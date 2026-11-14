@@ -1,7 +1,15 @@
+pub mod scp;
 pub mod session_manager;
 pub mod sftp;
 
-pub use session_manager::{ActiveTransferContext, SessionManager, SessionStateSnapshot};
+pub use scp::{
+    download_single_file_scp, establish_scp_connection, upload_single_file_scp,
+    ActiveScpConnection, ScpFileSystemAdapter,
+};
+pub use session_manager::{
+    ActiveBackendConnection, ActiveTransferContext, SessionManager, SessionStateSnapshot,
+    TransferClient,
+};
 pub use sftp::{ConnectOutcome, RemoteDirectoryListing};
 
 use crate::errors::AppError;

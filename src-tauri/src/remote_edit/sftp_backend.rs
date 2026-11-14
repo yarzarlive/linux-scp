@@ -129,8 +129,15 @@ impl RemoteEditBackend for SftpRemoteEditBackend {
             .map(|s| (s.current_remote_path, s.home_remote_path))
             .unwrap_or_else(|| ("/".to_string(), None));
 
+        let sftp = ctx.sftp.as_ref().ok_or_else(|| {
+            BackendError::Disconnected(
+                "Remote file editing requires an active SFTP session with metadata support"
+                    .to_string(),
+            )
+        })?;
+
         let resolved = resolve_remote_input_path(path, &current_dir, home_dir.as_deref());
-        let canon = tokio::time::timeout(ctx.timeout_duration, ctx.sftp.canonicalize(&resolved))
+        let canon = tokio::time::timeout(ctx.timeout_duration, sftp.canonicalize(&resolved))
             .await
             .map_err(|_| {
                 BackendError::Disconnected(format!(
@@ -149,7 +156,14 @@ impl RemoteEditBackend for SftpRemoteEditBackend {
             .await
             .map_err(|e| BackendError::Disconnected(e.to_string()))?;
 
-        let attrs = tokio::time::timeout(ctx.timeout_duration, ctx.sftp.metadata(path))
+        let sftp = ctx.sftp.as_ref().ok_or_else(|| {
+            BackendError::Disconnected(
+                "Remote file editing requires an active SFTP session with metadata support"
+                    .to_string(),
+            )
+        })?;
+
+        let attrs = tokio::time::timeout(ctx.timeout_duration, sftp.metadata(path))
             .await
             .map_err(|_| {
                 BackendError::Disconnected(format!("Timed out stating remote path '{}'", path))
@@ -183,7 +197,14 @@ impl RemoteEditBackend for SftpRemoteEditBackend {
             .await
             .map_err(|e| BackendError::Disconnected(e.to_string()))?;
 
-        let mut remote_file = tokio::time::timeout(ctx.timeout_duration, ctx.sftp.open(path))
+        let sftp = ctx.sftp.as_ref().ok_or_else(|| {
+            BackendError::Disconnected(
+                "Remote file editing requires an active SFTP session with metadata support"
+                    .to_string(),
+            )
+        })?;
+
+        let mut remote_file = tokio::time::timeout(ctx.timeout_duration, sftp.open(path))
             .await
             .map_err(|_| {
                 BackendError::Disconnected(format!("Timed out opening remote file '{}'", path))
@@ -283,6 +304,13 @@ impl RemoteEditBackend for SftpRemoteEditBackend {
 
         let temp_remote = format!("{}.linuxscp-edit-tmp-{}", path, Uuid::new_v4());
 
+        let sftp = ctx.sftp.as_ref().ok_or_else(|| {
+            BackendError::Disconnected(
+                "Remote file editing requires an active SFTP session with metadata support"
+                    .to_string(),
+            )
+        })?;
+
         // Fast & safest path: write to a sibling temporary file and promote into place.
         let stage_res = self
             .write_remote_stream(&ctx, src, &temp_remote, expected_size, true)
@@ -298,28 +326,27 @@ impl RemoteEditBackend for SftpRemoteEditBackend {
                         };
                         let _ = tokio::time::timeout(
                             ctx.timeout_duration,
-                            ctx.sftp.set_metadata(temp_remote.as_str(), attrs),
+                            sftp.set_metadata(temp_remote.as_str(), attrs),
                         )
                         .await;
                     }
                 }
 
                 // SFTPv3 rename fails if destination exists; remove destination and rename temp into place.
-                let _ =
-                    tokio::time::timeout(ctx.timeout_duration, ctx.sftp.remove_file(path)).await;
+                let _ = tokio::time::timeout(ctx.timeout_duration, sftp.remove_file(path)).await;
                 match tokio::time::timeout(
                     ctx.timeout_duration,
-                    ctx.sftp.rename(temp_remote.as_str(), path),
+                    sftp.rename(temp_remote.as_str(), path),
                 )
                 .await
                 {
                     Ok(Ok(())) => return Ok(()),
                     Ok(Err(e)) => {
-                        let _ = ctx.sftp.remove_file(temp_remote.as_str()).await;
+                        let _ = sftp.remove_file(temp_remote.as_str()).await;
                         return Err(map_sftp_err(e, path));
                     }
                     Err(_) => {
-                        let _ = ctx.sftp.remove_file(temp_remote.as_str()).await;
+                        let _ = sftp.remove_file(temp_remote.as_str()).await;
                         return Err(BackendError::Disconnected(format!(
                             "Timed out promoting uploaded file '{}'",
                             path
@@ -340,7 +367,7 @@ impl RemoteEditBackend for SftpRemoteEditBackend {
                         };
                         let _ = tokio::time::timeout(
                             ctx.timeout_duration,
-                            ctx.sftp.set_metadata(path, attrs),
+                            sftp.set_metadata(path, attrs),
                         )
                         .await;
                     }
@@ -369,10 +396,17 @@ impl SftpRemoteEditBackend {
             )))
         })?;
 
+        let sftp = ctx.sftp.as_ref().ok_or_else(|| {
+            BackendError::Disconnected(
+                "Remote file editing requires an active SFTP session with metadata support"
+                    .to_string(),
+            )
+        })?;
+
         let flags = OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE;
         let mut remote_file = tokio::time::timeout(
             ctx.timeout_duration,
-            ctx.sftp.open_with_flags(dest_remote, flags),
+            sftp.open_with_flags(dest_remote, flags),
         )
         .await
         .map_err(|_| {
@@ -449,14 +483,14 @@ impl SftpRemoteEditBackend {
         if let Err(err) = res {
             drop(remote_file);
             if remove_on_error {
-                let _ = ctx.sftp.remove_file(dest_remote).await;
+                let _ = sftp.remove_file(dest_remote).await;
             }
             return Err(err);
         }
 
         if written != expected_size {
             if remove_on_error {
-                let _ = ctx.sftp.remove_file(dest_remote).await;
+                let _ = sftp.remove_file(dest_remote).await;
             }
             return Err(BackendError::Other(AppError::Protocol(format!(
                 "Upload byte mismatch for '{}': expected {} bytes, wrote {}",

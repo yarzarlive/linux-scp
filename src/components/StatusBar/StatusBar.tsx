@@ -1,5 +1,5 @@
 import React from "react";
-import { ShieldCheck, HardDrive, Server } from "lucide-react";
+import { ShieldCheck, HardDrive, Server, ShieldAlert } from "lucide-react";
 import { SystemInfo } from "../../types/ipc";
 import { ConnectionSession } from "../../types/session";
 
@@ -17,6 +17,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   activeSession = null,
 }) => {
   const isElevated = activeSession?.elevation.type === "ElevatedSudo";
+  const elevationInfo =
+    activeSession?.elevation.type === "ElevatedSudo" ? activeSession.elevation : null;
 
   return (
     <footer className="flex items-center justify-between px-3 py-1 bg-commander-surface border-t border-commander-border text-[11px] text-commander-subtext select-none">
@@ -54,13 +56,21 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           </div>
         )}
         <div
-          className={`text-[10px] uppercase font-mono px-1.5 py-0.5 rounded border ${
+          className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded border flex items-center gap-1 font-semibold ${
             isElevated
-              ? "bg-amber-950/60 border-amber-700 text-amber-300"
-              : "bg-commander-dark border-commander-border"
+              ? "bg-amber-950/80 border-amber-500 text-amber-300 shadow-sm"
+              : "bg-commander-dark border-commander-border text-commander-subtext"
           }`}
+          title={
+            elevationInfo
+              ? `Elevated SFTP active (${elevationInfo.effective_user}): ${elevationInfo.executed_command}`
+              : "Standard unprivileged user session"
+          }
         >
-          Elevated: {isElevated ? "Yes" : "No"}
+          {elevationInfo && <ShieldAlert className="w-3 h-3 text-amber-400 shrink-0" />}
+          <span>
+            {elevationInfo ? `ELEVATED / ROOT (${elevationInfo.effective_user})` : "Elevated: No"}
+          </span>
         </div>
       </div>
     </footer>

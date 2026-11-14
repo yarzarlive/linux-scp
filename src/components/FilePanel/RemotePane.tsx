@@ -147,6 +147,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     name: string;
     missingAppId?: string | null;
   } | null>(null);
+  const [directDownloadPath, setDirectDownloadPath] = useState<string>("");
 
   const loadedSessionIdRef = useRef<string | null>(null);
   const requestSeqRef = useRef<number>(0);
@@ -177,6 +178,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       overrideShowHidden?: boolean
     ): Promise<void> => {
       if (!isConnected || !activeSession) return;
+      if (!activeSession.capabilities.can_list_directory) return;
 
       const seq = ++requestSeqRef.current;
       const effectiveHidden = overrideShowHidden ?? currentNav.showHidden;
@@ -224,7 +226,9 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         setSelectedPaths(new Set());
         setFocusedPath(undefined);
         setRemoteError(null);
-        loadDirectory(activeSession.current_remote_path, true);
+        if (activeSession.capabilities.can_list_directory) {
+          loadDirectory(activeSession.current_remote_path, true);
+        }
       }
     } else {
       loadedSessionIdRef.current = null;
@@ -246,9 +250,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   // Reload remote directory when uploads complete
   useEffect(() => {
     if (refreshTrigger > 0 && isConnected && activeSession) {
-      const target = currentPath || activeSession.current_remote_path;
-      if (target) {
-        loadDirectory(target, false);
+      if (activeSession.capabilities.can_list_directory) {
+        const target = currentPath || activeSession.current_remote_path;
+        if (target) {
+          loadDirectory(target, false);
+        }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,6 +262,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
   // Navigation handlers
   const handleNavigate = (targetPath: string) => {
+    if (activeSession && !activeSession.capabilities.can_list_directory) {
+      setCurrentPath(targetPath);
+      onDirectoryChange?.(targetPath);
+      return;
+    }
     loadDirectory(targetPath, true);
   };
 
@@ -626,9 +637,22 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
               ({activeSession.username}@{activeSession.host}:{activeSession.port})
             </span>
           )}
+          {activeSession?.protocol === "SCP" && (
+            <span
+              className="ml-1 px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/50 text-[10px] font-bold tracking-wider uppercase shrink-0 flex items-center gap-1 shadow-sm"
+              title="Connected via SCP protocol (Transfer-Only mode)"
+            >
+              <Shield className="w-3 h-3 text-sky-400 shrink-0" />
+              <span>SCP (TRANSFER-ONLY)</span>
+            </span>
+          )}
           {activeSession?.elevation.type === "ElevatedSudo" && (
-            <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-700/60 text-[10px] font-semibold uppercase shrink-0">
-              ELEVATED ({activeSession.elevation.effective_user})
+            <span
+              className="ml-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/50 text-[10px] font-bold tracking-wider uppercase shrink-0 flex items-center gap-1 shadow-sm"
+              title={`Running elevated SFTP session via: ${activeSession.elevation.executed_command}`}
+            >
+              <ShieldAlert className="w-3 h-3 text-amber-400 shrink-0" />
+              <span>ELEVATED / ROOT ({activeSession.elevation.effective_user})</span>
             </span>
           )}
         </div>
@@ -772,16 +796,22 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         path={displayedPath}
         onNavigate={handleNavigate}
         onBack={handleBack}
-        canGoBack={isConnected && canGoBack}
+        canGoBack={
+          isConnected && Boolean(activeSession?.capabilities.can_list_directory) && canGoBack
+        }
         onForward={handleForward}
-        canGoForward={isConnected && canGoForward}
+        canGoForward={
+          isConnected && Boolean(activeSession?.capabilities.can_list_directory) && canGoForward
+        }
         onUp={handleUp}
-        canGoUp={isConnected && canGoUp}
-        onHome={handleHome}
-        onRoot={handleRoot}
-        onRefresh={handleRefresh}
+        canGoUp={isConnected && Boolean(activeSession?.capabilities.can_list_directory) && canGoUp}
+        onHome={activeSession?.capabilities.can_list_directory ? handleHome : undefined}
+        onRoot={activeSession?.capabilities.can_list_directory ? handleRoot : undefined}
+        onRefresh={activeSession?.capabilities.can_list_directory ? handleRefresh : undefined}
         showHidden={currentNav.showHidden}
-        onToggleHidden={handleToggleHidden}
+        onToggleHidden={
+          activeSession?.capabilities.can_list_directory ? handleToggleHidden : undefined
+        }
         disabled={!isConnected}
         isLoading={isLoading}
       />
@@ -816,7 +846,119 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
           </div>
         </>
       ) : isConnected && activeSession ? (
-        remoteError?.kind === "PermissionDenied" ? (
+        !activeSession.capabilities.can_list_directory ? (
+          <div
+            className="flex-1 flex flex-col p-4 bg-commander-surface/30 overflow-y-auto select-none"
+            data-testid="scp-transfer-panel"
+          >
+            {/* SCP Capability Banner */}
+            <div className="p-3.5 mb-4 rounded-md border border-sky-800/60 bg-sky-950/40 text-xs">
+              <div className="flex items-center gap-2 text-sky-300 font-semibold mb-1">
+                <Shield className="w-4 h-4 text-sky-400" />
+                <span>SCP Protocol Active • Transfer-Only Mode</span>
+              </div>
+              <p className="text-commander-subtext text-[11px] leading-relaxed mb-2">
+                Legacy SCP operates as a streaming transfer mechanism over an SSH exec channel. It
+                does not support remote directory browsing, file listing, permissions management, or
+                interactive file editing.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] pt-2 border-t border-sky-900/50">
+                <div>
+                  <span className="text-emerald-400 font-medium">Supported Operations:</span>
+                  <ul className="list-disc list-inside text-commander-subtext pl-1 mt-0.5 space-y-0.5">
+                    <li>Upload files to remote target path</li>
+                    <li>Direct download of remote file by path</li>
+                    <li>Transfer queue progress, cancel, and speed</li>
+                    <li>Strict SSH host-key verification and Keyring</li>
+                  </ul>
+                </div>
+                <div>
+                  <span className="text-amber-400 font-medium">Explicitly Unsupported:</span>
+                  <ul className="list-disc list-inside text-commander-subtext pl-1 mt-0.5 space-y-0.5">
+                    <li>Remote directory browsing and file listing</li>
+                    <li>Remote file creation, rename, and deletion</li>
+                    <li>Chmod and chown ownership modification</li>
+                    <li>Sudo-SFTP elevation and remote file editing</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {/* Target Upload Path & Drag-and-Drop Zone */}
+            <div className="p-4 mb-4 rounded-md border border-commander-border bg-commander-darker/60 flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-commander-text flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-commander-accent" />
+                  <span>Target Remote Upload Directory</span>
+                </span>
+                <span className="text-[11px] font-mono text-commander-text bg-commander-surface px-2 py-0.5 rounded border border-commander-border">
+                  {displayedPath}
+                </span>
+              </div>
+
+              <div
+                className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                  dropState.status === "valid"
+                    ? "border-emerald-500 bg-emerald-950/20 text-emerald-300"
+                    : dropState.status === "invalid"
+                      ? "border-rose-500 bg-rose-950/20 text-rose-300"
+                      : "border-commander-border/80 hover:border-commander-accent/60 bg-commander-dark/30 text-commander-subtext"
+                }`}
+              >
+                <Download className="w-8 h-8 mx-auto mb-2 text-commander-accent/70 rotate-180" />
+                <div className="text-xs font-medium text-commander-text mb-1">
+                  Drop files from Local pane here to upload via SCP
+                </div>
+                <p className="text-[11px] text-commander-subtext">
+                  Transfers will be queued and sent safely to{" "}
+                  <span className="font-mono text-commander-text">{displayedPath}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Direct Remote File Download Card */}
+            <div className="p-4 rounded-md border border-commander-border bg-commander-darker/60 flex flex-col gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-commander-text">
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Direct Remote File Download</span>
+              </div>
+              <p className="text-[11px] text-commander-subtext">
+                Enter an absolute or home-relative remote file path to download to your local
+                working directory:
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (directDownloadPath.trim() && onDownload) {
+                    onDownload([directDownloadPath.trim()]);
+                    setDirectDownloadPath("");
+                  }
+                }}
+                className="flex items-center gap-2 mt-1"
+              >
+                <input
+                  type="text"
+                  value={directDownloadPath}
+                  onChange={(e) => setDirectDownloadPath(e.target.value)}
+                  placeholder="/remote/path/to/file.ext"
+                  className="flex-1 px-2.5 py-1.5 rounded bg-commander-dark border border-commander-border text-xs text-commander-text font-mono placeholder:text-commander-subtext/40 focus:outline-none focus:border-commander-accent"
+                />
+                <button
+                  type="submit"
+                  disabled={!directDownloadPath.trim()}
+                  className={`px-3 py-1.5 rounded text-xs font-medium flex items-center gap-1 transition-colors ${
+                    directDownloadPath.trim()
+                      ? "bg-emerald-950/60 hover:bg-emerald-900/70 text-emerald-200 border border-emerald-700/60 cursor-pointer"
+                      : "bg-commander-dark/40 border border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
+                  }`}
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Download</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        ) : remoteError?.kind === "PermissionDenied" ? (
           <>
             <ColumnHeader
               sortBy={currentNav.sortBy}
@@ -1036,15 +1178,21 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       <div className="flex items-center justify-between px-3 py-1 bg-commander-darker border-t border-commander-border text-[11px] text-commander-subtext select-none">
         <span>
           {isConnected && activeSession ? (
-            <>
-              <span>{summary.totalCount} items</span>
-              {summary.selectedCount > 0 && (
-                <span className="ml-2 text-commander-accent">
-                  • {summary.selectedCount} selected ({formatFileSize(summary.selectedBytes, false)}
-                  )
-                </span>
-              )}
-            </>
+            !activeSession.capabilities.can_list_directory ? (
+              <span className="text-sky-300 font-medium">
+                SCP Mode • Direct transfer queue only (Browsing & file management unsupported)
+              </span>
+            ) : (
+              <>
+                <span>{summary.totalCount} items</span>
+                {summary.selectedCount > 0 && (
+                  <span className="ml-2 text-commander-accent">
+                    • {summary.selectedCount} selected (
+                    {formatFileSize(summary.selectedBytes, false)})
+                  </span>
+                )}
+              </>
+            )
           ) : isConnecting ? (
             "Handshaking SSH & SFTP..."
           ) : isFailed ? (

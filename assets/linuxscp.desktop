@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LinuxSCP
+GenericName=File Transfer Client
+Comment=WinSCP-inspired dual-pane file transfer client for the Linux desktop
+Exec=linuxscp %U
+Icon=linuxscp
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+Keywords=ssh;sftp;scp;ftp;transfer;commander;remote;
+StartupWMClass=linuxscp
+MimeType=x-scheme-handler/sftp;x-scheme-handler/scp;
+

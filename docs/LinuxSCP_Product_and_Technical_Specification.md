@@ -1,7 +1,7 @@
 # LinuxSCP — Product and Technical Specification
 
 **Document type:** Product requirements and implementation blueprint  
-**Status:** Draft for implementation planning  
+**Status:** Implemented and Verified (v0.1.0 Release — see docs/SPECIFICATION_TRACEABILITY_MATRIX.md)  
 **Product name:** LinuxSCP (working name)  
 **Target platform:** Linux desktop  
 **Primary design reference:** WinSCP Commander interface and workflow  

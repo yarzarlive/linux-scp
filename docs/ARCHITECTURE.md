@@ -107,6 +107,13 @@ If unsupported, an explicit `CapabilityError::UnsupportedOperation` is returned,
 2. **Credential Scrubbing:** Sensitive strings in memory are wrapped in zeroizing buffers and excluded from debug/tracing logs.
 3. **No Shell Interpolation:** Desktop applications and external commands are spawned via `std::process::Command` using structured argument vectors, eliminating shell injection vulnerabilities.
 4. **Internal Drag-and-Drop Only:** Drag-and-drop operations are bounded strictly between LinuxSCP's local and remote panes; desktop file dropping is unsupported.
+5. **Elevated (Sudo) SFTP Protocol Channel Isolation:**
+   - When elevated SFTP is enabled for a profile, LinuxSCP opens an independent SSH session channel and executes the configured external binary path using non-interactive sudo (`sudo -n <sftp_server_path>`).
+   - The SFTP protocol stream is attached strictly to this process channel. Non-interactive execution is enforced (`-n`) because interactive password prompts or arbitrary shell MOTD/startup messages corrupt the binary SFTP handshake.
+   - `internal-sftp` daemon mode cannot be elevated externally and is rejected during validation.
+   - Persistent, unmistakable `ELEVATED / ROOT` badges are displayed in the remote filesystem pane and application status bar.
+   - Recursive deletion and destructive operations require additional explicit confirmation under elevated sessions.
+   - An administrator must configure a narrowly scoped rule in `/etc/sudoers.d/`, e.g. `<user> ALL=(root) NOPASSWD: <sftp_server_path>`. LinuxSCP never attempts to modify sudoers automatically and never recommends `NOPASSWD: ALL`.
 
 ---
 

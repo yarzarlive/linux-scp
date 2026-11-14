@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.linuxscp.client</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>LinuxSCP</name>
+  <summary>WinSCP-inspired dual-pane file transfer client for the Linux desktop</summary>
+  <description>
+    <p>
+      LinuxSCP is a modern dual-pane file transfer and remote file management client built specifically for Linux desktop environments.
+    </p>
+    <p>
+      Features:
+    </p>
+    <ul>
+      <li>Commander dual-pane file manager layout with independent local and remote panes</li>
+      <li>Secure SSH / SFTP and atomic SCP file transfer protocols</li>
+      <li>Strict host-key verification with persistent fingerprint store</li>
+      <li>Linux Secret Service keyring integration (no plaintext credentials)</li>
+      <li>Direct application launching through Open With (XDG standard)</li>
+      <li>Integrated terminal emulator discovery and launching</li>
+      <li>Remote file editing with conflict detection and automated change syncing</li>
+      <li>Sudo-elevated SFTP server execution support</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">linuxscp.desktop</launchable>
+  <url type="homepage">https://github.com/your-org/LinuxSCP</url>
+  <provides>
+    <binary>linuxscp</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-11-14">
+      <description>
+        <p>First public release of LinuxSCP featuring dual-pane file manager, SFTP, SCP, and Secret Service integration.</p>
+      </description>
+    </release>
+  </releases>
+</component>
+

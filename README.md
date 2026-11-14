@@ -6,9 +6,87 @@ Built with **Tauri 2**, **Rust**, **Tokio**, **React 18**, **TypeScript**, and *
 
 ---
 
-## 1. Prerequisites
+## 1. Supported Distributions & Requirements
 
-### Linux System Dependencies (Ubuntu / Debian / Zorin OS)
+### Tested & Supported Linux Environments
+- **Zorin OS 18.1 (Noble)** (Explicitly built and tested)
+- **Ubuntu 24.04 LTS (Noble Numbat)** / **Ubuntu 22.04 LTS (Jammy Jellyfish)**
+- **Debian 12 (Bookworm)**
+- **Linux Mint 21 / 22**, **Pop!_OS 22.04 / 24.04**
+- Modern glibc x86_64 Linux distributions via portable **AppImage**
+
+### System Runtime Dependencies
+- `libwebkit2gtk-4.1-0` (or `libwebkit2gtk-4.0-37`)
+- `libgtk-3-0`
+- `libsecret-1-0` (Linux Secret Service / D-Bus Keyring)
+- `openssh-client` (for external terminal sessions)
+
+---
+
+## 2. Installation Options
+
+### Option A: Debian / Ubuntu Package (`.deb`)
+Download or build `LinuxSCP_0.1.0_amd64.deb`:
+
+```bash
+# Install with apt (automatically resolves dependencies)
+sudo apt install ./src-tauri/target/release/bundle/deb/LinuxSCP_0.1.0_amd64.deb
+
+# Launch LinuxSCP
+linuxscp
+```
+
+### Option B: Portable AppImage (No Installation Required)
+Download or build `LinuxSCP_0.1.0_amd64.AppImage`:
+
+```bash
+chmod +x ./src-tauri/target/release/bundle/appimage/LinuxSCP_0.1.0_amd64.AppImage
+./src-tauri/target/release/bundle/appimage/LinuxSCP_0.1.0_amd64.AppImage
+```
+
+### Option C: Clean Rootless User Installation (`~/.local`)
+Install directly without requiring `sudo` privileges:
+
+```bash
+./scripts/install.sh --user
+```
+This installs the binary to `~/.local/bin/linuxscp`, registers the desktop launcher in `~/.local/share/applications/`, and updates the icon cache.
+
+### Option D: System-Wide Script Installation (`/usr/local`)
+```bash
+sudo ./scripts/install.sh
+```
+
+---
+
+## 3. Uninstallation
+
+### Debian / Ubuntu (`.deb`)
+```bash
+# Remove application
+sudo apt remove linux-scp
+
+# Remove application and purge all persistent databases and state
+sudo apt purge linux-scp
+```
+
+### Script Uninstallation
+```bash
+# If installed with --user:
+./scripts/uninstall.sh --user
+
+# If installed with --user and wishing to wipe all user databases/keyrings:
+./scripts/uninstall.sh --user --purge
+
+# If installed system-wide:
+sudo ./scripts/uninstall.sh
+```
+
+---
+
+## 4. Building from Source
+
+### Build Prerequisites
 ```bash
 sudo apt update && sudo apt install -y \
   libwebkit2gtk-4.1-dev \
@@ -24,140 +102,80 @@ sudo apt update && sudo apt install -y \
   pkg-config
 ```
 
-### Language Toolchains
-- **Rust:** `1.80+` (managed via `rustup`)
+- **Rust:** `1.80+` (via `rustup`)
 - **Node.js:** `v20+` or `v22+` (with `npm`)
 
----
-
-## 2. Setup & Installation
-
-Clone the repository and install frontend dependencies:
-
+### Build Commands
 ```bash
-git clone https://github.com/your-org/LinuxSCP.git
-cd LinuxSCP
-npm install
+# 1. Install frontend dependencies
+npm ci
+
+# 2. Compile frontend and build release packages (.deb and .AppImage)
+npm run build
+npx tauri build -b deb,appimage
 ```
 
+Packaged release artifacts are located in:
+- `src-tauri/target/release/bundle/deb/LinuxSCP_0.1.0_amd64.deb`
+- `src-tauri/target/release/bundle/appimage/LinuxSCP_0.1.0_amd64.AppImage`
+
+For the step-by-step release audit checklist, see [RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md).
+
 ---
 
-## 3. Development Commands
+## 5. Development & Testing Commands
 
-### Run Desktop App in Development Mode (Live Reload)
+### Run Desktop App in Development Mode
 ```bash
 npm run tauri dev
 ```
 
-### Run Frontend in Vite Browser Mode
+### Quality & Safety Verification Gates
 ```bash
-npm run dev
-```
-
----
-
-## 4. Testing & Quality Verification
-
-LinuxSCP enforces strict verification gates before every milestone completion:
-
-### Frontend Checks & Tests
-```bash
-# 1. Typecheck TypeScript contracts
+# Frontend type check, linting, code formatting, and Vitest unit tests
 npm run typecheck
-
-# 2. Check code formatting
-npm run format:check
-
-# 3. Lint source files
 npm run lint
-
-# 4. Run Vitest unit tests
+npm run format:check
 npm test
 
-# 5. Build frontend distribution bundle
-npm run build
-```
-
-### Rust Backend Checks & Tests
-```bash
+# Rust formatting, Clippy (zero warnings), and unit/integration tests
 cd src-tauri
-
-# 1. Check Rust formatting
-cargo fmt --check
-
-# 2. Run Clippy with zero warnings allowed
+cargo fmt -- --check
 cargo clippy --all-targets -- -D warnings
-
-# 3. Run Rust unit tests
 cargo test
-
-# 4. Compile desktop debug binary
-cargo build
+cd ..
 ```
 
 ---
 
-## 5. Security & Privacy Architectural Principles
+## 6. Security & Architectural Principles
 
-1. **Zero Plaintext Secrets:** Passwords, private-key passphrases, and tokens are stored exclusively in the Linux Secret Service (via DBus) and never written to SQLite, plaintext files, or application logs.
-2. **Log Redaction:** Structured logging via `tracing` actively filters and redacts any occurrence of credentials, keys, and PEM blocks.
-3. **Strict Host-Key Verification:** Host keys are verified explicitly; changed or untrusted keys are never accepted automatically.
-4. **Internal Drag-and-Drop Boundary:** Drag-and-drop is restricted strictly between LinuxSCP's local and remote panes; desktop file dropping is unsupported.
+1. **Zero Plaintext Secrets:** Passwords, private-key passphrases, and tokens are stored exclusively in the Linux Secret Service (via D-Bus) and never written to SQLite, plaintext files, or application logs.
+2. **Log Redaction:** Structured logging actively filters and redacts credentials, private keys, and PEM blocks (`[REDACTED_SENSITIVE]`).
+3. **Strict Host-Key Verification:** Host keys are verified explicitly; changed host keys trigger an immediate block with fingerprint comparison and cannot be bypassed in-band.
+4. **Internal Drag-and-Drop:** Drag-and-drop is restricted strictly between LinuxSCP's local and remote panes; desktop file dropping is unsupported.
 5. **No Shell Interpolation:** External commands and desktop entries are launched with explicit argument vectors using `std::process::Command`, preventing command injection vulnerabilities.
+6. **Atomic File Staging:** Downloads and uploads stream into `.linuxscp-tmp-<uuid>` files and are atomically promoted upon verification; aborted transfers are immediately cleaned up.
+
+For the full security audit and vulnerability assessment, see [SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md).
 
 ---
 
-## 6. Architecture & Directory Overview
+## 7. Troubleshooting & FAQ
 
-```text
-LinuxSCP/
-├── src/                          # React + TypeScript Frontend
-│   ├── app/                      # Main Commander application window layout
-│   ├── components/               # UI components (Header, StatusBar, Panes)
-│   ├── services/                 # Type-safe IPC client wrappers (invoke & listen)
-│   └── types/                    # Domain models and IPC DTO contracts
-│
-├── src-tauri/                    # Tauri 2 & Rust Backend
-│   ├── src/
-│   │   ├── main.rs               # Binary entry point
-│   │   ├── lib.rs                # Tauri runtime builder & handler registration
-│   │   ├── commands/             # Thin IPC command controllers
-│   │   ├── errors.rs             # Typed AppError enumeration
-│   │   └── logging.rs            # Security-filtered structured logger
-│   └── tauri.conf.json           # Tauri 2 window & bundle capabilities
-│
-├── tests/                        # Frontend & IPC Unit Tests
-├── docs/                         # Specification & architecture blueprints
-└── spikes/                       # Milestone 0 technical feasibility prototypes
-```
+### Secret Service / Keyring Unavailable
+- **Symptom:** Error saving credentials or `Linux Secret Service failure during secret storage`.
+- **Solution:** Ensure a Secret Service provider daemon is running on your desktop session bus (e.g. `gnome-keyring-daemon`, `keepassxc`, or `ksecretservice`). In headless/container environments, ensure `dbus-run-session` is initialized.
 
----
+### Sudo-SFTP Handshake Timeout
+- **Symptom:** `Timed out waiting for elevated SFTP protocol handshake`.
+- **Solution:** Sudo elevation requires non-interactive execution. Ensure your server-side `/etc/sudoers` configuration allows passwordless execution of the SFTP server binary:
+  ```text
+  username ALL=(root) NOPASSWD: /usr/lib/openssh/sftp-server
+  ```
 
-## 7. Reproducible Local SSH/SFTP Test Setup
-
-Live SFTP integration tests (such as `test_live_sftp_connection_and_host_key_verification_flow` in `src-tauri/src/protocol/sftp.rs`) require an accessible OpenSSH server with the SFTP subsystem enabled.
-
-### Option A: Containerized OpenSSH Test Server (Docker / Podman)
-Launch a disposable OpenSSH server on localhost port `2222` with your public key (`~/.ssh/id_rsa.pub`) authorized:
-
-```bash
-docker run -d --name linuxscp-test-sshd \
-  -p 2222:2222 \
-  -e PUID=$(id -u) \
-  -e PGID=$(id -g) \
-  -e PUBLIC_KEY="$(cat ~/.ssh/id_rsa.pub)" \
-  -e USER_NAME=ubuntu \
-  lscr.io/linuxserver/openssh-server:latest
-```
-
-### Option B: Local KVM / Libvirt Ubuntu VM
-When running with the default libvirt test VM (`ubt26` at `192.168.122.10:22`, user `ubuntu`, key `~/.ssh/id_rsa`):
-
-```bash
-virsh start ubt26
-ssh -i ~/.ssh/id_rsa ubuntu@192.168.122.10 "echo SFTP target ready"
-```
-
-*Note: If the test target (`192.168.122.10:22`) is offline, live network integration tests gracefully detect the unreachable host without failing offline unit tests.*
-
-
+### Wayland Scaling / Rendering
+- If encountering WebKit rendering issues under certain Wayland compositors, run with:
+  ```bash
+  GDK_BACKEND=x11 linuxscp
+  ```

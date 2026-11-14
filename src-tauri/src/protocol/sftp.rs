@@ -151,20 +151,14 @@ impl ActiveSftpConnection {
     }
 }
 
-/// Establishes an SSH connection, verifies the host key, authenticates, and initializes the SFTP subsystem.
-pub async fn establish_sftp_connection(
+/// Establishes the underlying SSH transport connection, verifies the host key,
+/// and completes authentication. Both SFTP and SCP backends reuse this function
+/// so host key verification and credential handling are 100% consistent.
+pub async fn establish_ssh_transport(
     profile: &ConnectionProfile,
     secret_override: Option<String>,
-) -> Result<Result<ActiveSftpConnection, ConnectOutcome>, AppError> {
-    profile.validate()?;
-
-    if profile.protocol != ProtocolType::Sftp {
-        return Err(AppError::Protocol(format!(
-            "Protocol {} is not supported by the SFTP connection adapter",
-            profile.protocol.as_str()
-        )));
-    }
-
+) -> Result<Result<(Handle<SshClientHandler>, KnownHostEntry, Duration), ConnectOutcome>, AppError>
+{
     let timeout_secs = u64::from(profile.connection_settings.timeout_seconds.max(5));
     let timeout_duration = Duration::from_secs(timeout_secs);
 
@@ -262,6 +256,29 @@ pub async fn establish_sftp_connection(
     // 2. Authenticate
     authenticate_ssh_session(&mut ssh_handle, profile, secret_override, timeout_duration).await?;
 
+    Ok(Ok((ssh_handle, trusted_host_key, timeout_duration)))
+}
+
+/// Establishes an SSH connection, verifies the host key, authenticates, and initializes the SFTP subsystem.
+pub async fn establish_sftp_connection(
+    profile: &ConnectionProfile,
+    secret_override: Option<String>,
+) -> Result<Result<ActiveSftpConnection, ConnectOutcome>, AppError> {
+    profile.validate()?;
+
+    if profile.protocol != ProtocolType::Sftp {
+        return Err(AppError::Protocol(format!(
+            "Protocol {} is not supported by the SFTP connection adapter",
+            profile.protocol.as_str()
+        )));
+    }
+
+    let (ssh_handle, trusted_host_key, timeout_duration) =
+        match establish_ssh_transport(profile, secret_override).await? {
+            Ok(tuple) => tuple,
+            Err(outcome) => return Ok(Err(outcome)),
+        };
+
     // 3. Open SFTP Subsystem Channel (or elevated sudo-SFTP channel)
     let channel = tokio::time::timeout(timeout_duration, ssh_handle.channel_open_session())
         .await
@@ -269,7 +286,7 @@ pub async fn establish_sftp_connection(
         .map_err(|e| AppError::Protocol(format!("Failed to open SSH session channel: {}", e)))?;
 
     let elevation_state = if profile.sudo_sftp.enabled {
-        let cmd = profile.sudo_sftp.effective_command().to_string();
+        let cmd = profile.sudo_sftp.effective_command();
         tokio::time::timeout(timeout_duration, channel.exec(true, cmd.as_str()))
             .await
             .map_err(|_| AppError::Protocol("Timed out executing sudo-SFTP command".to_string()))?
@@ -294,15 +311,26 @@ pub async fn establish_sftp_connection(
     let sftp_session = tokio::time::timeout(timeout_duration, SftpSession::new(channel.into_stream()))
         .await
         .map_err(|_| {
-            AppError::Protocol(
-                "Timed out initializing SFTP protocol stream (verify remote sftp-server or sudoers NOPASSWD)".to_string(),
-            )
+            if profile.sudo_sftp.enabled {
+                let bin = profile.sudo_sftp.effective_binary_path();
+                AppError::Protocol(format!(
+                    "Timed out waiting for elevated SFTP protocol handshake. When sudo-SFTP is enabled, sudo must not prompt for a password. Please ensure a narrow non-interactive sudoers rule is configured on the server, e.g.: '{} ALL=(root) NOPASSWD: {}'",
+                    profile.username, bin
+                ))
+            } else {
+                AppError::Protocol("Timed out initializing SFTP protocol stream".to_string())
+            }
         })?
         .map_err(|e| {
-            AppError::Protocol(format!(
-                "SFTP subsystem initialization failed (if sudo-SFTP is enabled, ensure NOPASSWD is configured for sftp-server): {}",
-                e
-            ))
+            if profile.sudo_sftp.enabled {
+                let bin = profile.sudo_sftp.effective_binary_path();
+                AppError::Protocol(format!(
+                    "Elevated SFTP protocol handshake failed: {}. Sudo elevation requires the server binary '{}' to be executable via non-interactive sudo. If sudo prompted for an interactive password or emitted diagnostic messages on stdout, the binary SFTP handshake was rejected. Please verify the binary path and ensure your server-side sudoers configuration has: '{} ALL=(root) NOPASSWD: {}'",
+                    e, bin, profile.username, bin
+                ))
+            } else {
+                AppError::Protocol(format!("SFTP subsystem initialization failed: {}", e))
+            }
         })?;
 
     // 4. Verify SFTP subsystem readiness by resolving the home directory and initial working directory
@@ -2064,5 +2092,92 @@ mod tests {
 
         adapter.delete_directory(&test_dir, true).await.unwrap();
         conn.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_live_sftp_sudo_elevation_unconfigured_fails_safely_with_guidance() {
+        let test_host = "192.168.122.10";
+        let test_port = 22u16;
+
+        if tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::TcpStream::connect((test_host, test_port)),
+        )
+        .await
+        .is_err()
+        {
+            return;
+        }
+
+        // Configure a profile with sudo elevation on the real test VM where NOPASSWD is NOT configured
+        let mut profile = ConnectionProfile::new(
+            "Ubuntu Test VM Sudo".to_string(),
+            ProtocolType::Sftp,
+            test_host.to_string(),
+            "ubuntu".to_string(),
+            AuthMethod::PublicKey {
+                private_key_path: "~/.ssh/id_rsa".to_string(),
+                requires_passphrase: false,
+            },
+        );
+        profile.port = test_port;
+        profile.connection_settings.timeout_seconds = 5;
+        profile.sudo_sftp.enabled = true;
+        profile.sudo_sftp.sftp_server_path = Some("/usr/lib/openssh/sftp-server".to_string());
+
+        let result = establish_sftp_connection(&profile, None).await;
+        let outcome = match result {
+            Ok(Err(ConnectOutcome::HostKeyUnknown {
+                algorithm,
+                fingerprint_sha256,
+                public_key_openssh,
+                ..
+            })) => {
+                let db = Database::open_default().expect("Should open DB");
+                let kh_repo = KnownHostsRepository::new(&db);
+                kh_repo
+                    .trust_unknown_host_key(
+                        test_host,
+                        test_port,
+                        &algorithm,
+                        &fingerprint_sha256,
+                        &public_key_openssh,
+                    )
+                    .expect("Should trust host key");
+                establish_sftp_connection(&profile, None).await
+            }
+            other => other,
+        };
+
+        // Connecting with sudo-sftp when sudo requires password must fail safely with actionable guidance
+        let err = match outcome {
+            Err(e) => e,
+            Ok(Ok(_)) => {
+                panic!("Expected connection failure when sudoers NOPASSWD is not configured")
+            }
+            Ok(Err(challenge)) => {
+                panic!(
+                    "Unexpected challenge after trusting host key: {:?}",
+                    challenge
+                )
+            }
+        };
+        match err {
+            AppError::Protocol(msg) => {
+                assert!(
+                    msg.contains("NOPASSWD")
+                        || msg.contains("sudoers")
+                        || msg.contains("handshake"),
+                    "Error message should provide clear sudoers NOPASSWD guidance: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected AppError::Protocol, got: {:?}", other),
+        }
+
+        // Clean up trusted entry after test so test_live_sftp_connection_and_host_key_verification_flow still starts with unknown
+        let db = Database::open_default().expect("Should open DB");
+        let kh_repo = KnownHostsRepository::new(&db);
+        let _ = kh_repo.delete_known_host(test_host, test_port);
     }
 }

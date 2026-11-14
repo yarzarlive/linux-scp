@@ -4,7 +4,7 @@ use crate::models::{
     TransferDirection, TransferJob, TransferProgressEvent, TransferState,
 };
 use crate::protocol::sftp::{classify_sftp_error, join_posix_path, normalize_posix_path};
-use crate::protocol::{ActiveTransferContext, SessionManager};
+use crate::protocol::{ActiveTransferContext, SessionManager, TransferClient};
 use russh_sftp::client::error::Error as SftpClientError;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileAttributes, StatusCode};
@@ -290,16 +290,6 @@ impl TransferManager {
         let mut created = Vec::new();
         for src in remote_paths {
             let norm_src = normalize_posix_path(&src);
-            let attrs = tokio::time::timeout(
-                ctx.timeout_duration,
-                ctx.sftp.symlink_metadata(norm_src.as_str()),
-            )
-            .await
-            .map_err(|_| {
-                AppError::Network(format!("Timed out inspecting remote path '{}'", norm_src))
-            })?
-            .map_err(|e| classify_sftp_error(e, &norm_src))?;
-
             let name = norm_src
                 .rsplit('/')
                 .next()
@@ -308,8 +298,22 @@ impl TransferManager {
                 .to_string();
 
             let dest_path = local_base.join(&name).to_string_lossy().to_string();
-            let is_dir = attrs.is_dir();
-            let total_bytes = if is_dir { None } else { attrs.size };
+            let (is_dir, total_bytes) = if let Some(sftp) = &ctx.sftp {
+                let attrs = tokio::time::timeout(
+                    ctx.timeout_duration,
+                    sftp.symlink_metadata(norm_src.as_str()),
+                )
+                .await
+                .map_err(|_| {
+                    AppError::Network(format!("Timed out inspecting remote path '{}'", norm_src))
+                })?
+                .map_err(|e| classify_sftp_error(e, &norm_src))?;
+                let dir = attrs.is_dir();
+                let bytes = if dir { None } else { attrs.size };
+                (dir, bytes)
+            } else {
+                (false, None)
+            };
 
             let mut job = TransferJob::new(
                 ctx.session_id.clone(),
@@ -498,6 +502,17 @@ impl TransferManager {
         ctx: &ActiveTransferContext,
         cancel_rx: &mut watch::Receiver<bool>,
     ) -> Result<(), TransferFailure> {
+        if let TransferClient::Scp { ssh_handle } = &ctx.client {
+            return self
+                .execute_scp_upload(job, ssh_handle, ctx, cancel_rx)
+                .await;
+        }
+
+        let sftp = ctx
+            .sftp
+            .as_ref()
+            .ok_or_else(|| TransferFailure::Error("SFTP session unavailable".to_string()))?;
+
         let job_id = &job.id.0;
         let mut tracker = SpeedTracker::new();
         let mut last_emit = Instant::now() - PROGRESS_THROTTLE;
@@ -568,7 +583,7 @@ impl TransferManager {
             .await;
 
         // Ensure root destination directory and all subdirectories exist
-        ensure_remote_dir(&ctx.sftp, &job.destination_path, ctx.timeout_duration)
+        ensure_remote_dir(sftp, &job.destination_path, ctx.timeout_duration)
             .await
             .map_err(TransferFailure::Error)?;
 
@@ -577,7 +592,7 @@ impl TransferManager {
                 return Err(TransferFailure::Cancelled);
             }
             let target_dir = join_posix_path(&job.destination_path, &rel_dir);
-            ensure_remote_dir(&ctx.sftp, &target_dir, ctx.timeout_duration)
+            ensure_remote_dir(sftp, &target_dir, ctx.timeout_duration)
                 .await
                 .map_err(TransferFailure::Error)?;
         }
@@ -652,6 +667,216 @@ impl TransferManager {
         Ok(())
     }
 
+    async fn execute_scp_upload(
+        &self,
+        job: &TransferJob,
+        ssh_handle: &Arc<
+            tokio::sync::Mutex<russh::client::Handle<crate::protocol::sftp::SshClientHandler>>,
+        >,
+        ctx: &ActiveTransferContext,
+        cancel_rx: &mut watch::Receiver<bool>,
+    ) -> Result<(), TransferFailure> {
+        let job_id = &job.id.0;
+
+        let src_path = Path::new(&job.source_path);
+        let meta = tokio::fs::symlink_metadata(src_path)
+            .await
+            .map_err(|e| TransferFailure::Error(format!("Failed to stat local file: {}", e)))?;
+        let total_bytes = meta.len();
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        let mode = meta.mode();
+
+        self.set_job_totals(job_id, Some(total_bytes), 1).await;
+        self.set_job_state(job_id, TransferState::Transferring)
+            .await;
+
+        let preserve_ts =
+            ctx.transfer_settings.preserve_timestamps && ctx.capabilities.can_preserve_timestamps;
+
+        let (prog_tx, mut prog_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let mgr = self.clone();
+        let job_id_clone = job_id.to_string();
+        let display_name_clone = src_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        let monitor_task = tokio::spawn(async move {
+            let mut transferred = 0u64;
+            let mut tracker = SpeedTracker::new();
+            let mut last_emit = Instant::now();
+            while let Some(chunk_size) = prog_rx.recv().await {
+                transferred += chunk_size;
+                tracker.record(chunk_size);
+                if last_emit.elapsed() >= PROGRESS_THROTTLE || transferred == total_bytes {
+                    last_emit = Instant::now();
+                    let speed = tracker.speed_bps();
+                    let eta = compute_eta(Some(total_bytes), transferred, speed);
+                    mgr.update_job_progress(
+                        &job_id_clone,
+                        transferred,
+                        Some(total_bytes),
+                        speed,
+                        eta,
+                        0,
+                        1,
+                        display_name_clone.clone(),
+                    )
+                    .await;
+                }
+            }
+        });
+
+        let handle_guard = ssh_handle.lock().await;
+        let res = crate::protocol::scp::upload_single_file_scp(
+            &handle_guard,
+            src_path,
+            &job.destination_path,
+            total_bytes,
+            mode,
+            mtime,
+            preserve_ts,
+            cancel_rx,
+            |chunk_size| {
+                let _ = prog_tx.send(chunk_size);
+            },
+            ctx.timeout_duration,
+        )
+        .await;
+
+        drop(handle_guard);
+        let _ = monitor_task.await;
+
+        match res {
+            Ok(()) => {
+                self.update_job_progress(
+                    job_id,
+                    total_bytes,
+                    Some(total_bytes),
+                    0,
+                    None,
+                    1,
+                    1,
+                    src_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string()),
+                )
+                .await;
+                Ok(())
+            }
+            Err(AppError::Protocol(msg)) if msg.contains("cancelled") => {
+                Err(TransferFailure::Cancelled)
+            }
+            Err(e) => Err(TransferFailure::Error(e.to_string())),
+        }
+    }
+
+    async fn execute_scp_download(
+        &self,
+        job: &TransferJob,
+        ssh_handle: &Arc<
+            tokio::sync::Mutex<russh::client::Handle<crate::protocol::sftp::SshClientHandler>>,
+        >,
+        ctx: &ActiveTransferContext,
+        cancel_rx: &mut watch::Receiver<bool>,
+    ) -> Result<(), TransferFailure> {
+        let job_id = &job.id.0;
+
+        let local_path = Path::new(&job.destination_path);
+        if let Some(parent) = local_path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                TransferFailure::Error(format!("Failed to create destination dir: {}", e))
+            })?;
+        }
+
+        self.set_job_state(job_id, TransferState::Transferring)
+            .await;
+
+        let preserve_ts =
+            ctx.transfer_settings.preserve_timestamps && ctx.capabilities.can_preserve_timestamps;
+
+        let (prog_tx, mut prog_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
+        let mgr = self.clone();
+        let job_id_clone = job_id.to_string();
+        let display_name_clone = local_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        let total_bytes_opt = job.total_bytes;
+        let final_transferred = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let final_transferred_clone = final_transferred.clone();
+        let monitor_task = tokio::spawn(async move {
+            let mut transferred = 0u64;
+            let mut tracker = SpeedTracker::new();
+            let mut last_emit = Instant::now();
+            while let Some(chunk_size) = prog_rx.recv().await {
+                transferred += chunk_size;
+                final_transferred_clone.store(transferred, std::sync::atomic::Ordering::Relaxed);
+                tracker.record(chunk_size);
+                if last_emit.elapsed() >= PROGRESS_THROTTLE
+                    || (total_bytes_opt.is_some() && Some(transferred) == total_bytes_opt)
+                {
+                    last_emit = Instant::now();
+                    let speed = tracker.speed_bps();
+                    let eta = compute_eta(total_bytes_opt, transferred, speed);
+                    mgr.update_job_progress(
+                        &job_id_clone,
+                        transferred,
+                        total_bytes_opt,
+                        speed,
+                        eta,
+                        0,
+                        1,
+                        display_name_clone.clone(),
+                    )
+                    .await;
+                }
+            }
+        });
+
+        let handle_guard = ssh_handle.lock().await;
+        let res = crate::protocol::scp::download_single_file_scp(
+            &handle_guard,
+            &job.source_path,
+            local_path,
+            preserve_ts,
+            cancel_rx,
+            |chunk_size| {
+                let _ = prog_tx.send(chunk_size);
+            },
+            ctx.timeout_duration,
+        )
+        .await;
+
+        drop(handle_guard);
+        let _ = monitor_task.await;
+        let transferred = final_transferred.load(std::sync::atomic::Ordering::Relaxed);
+
+        match res {
+            Ok(()) => {
+                self.update_job_progress(
+                    job_id,
+                    transferred,
+                    Some(transferred),
+                    0,
+                    None,
+                    1,
+                    1,
+                    local_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string()),
+                )
+                .await;
+                Ok(())
+            }
+            Err(AppError::Protocol(msg)) if msg.contains("cancelled") => {
+                Err(TransferFailure::Cancelled)
+            }
+            Err(e) => Err(TransferFailure::Error(e.to_string())),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn upload_single_file(
         &self,
@@ -672,11 +897,16 @@ impl TransferManager {
         tracker: &mut SpeedTracker,
         last_emit: &mut Instant,
     ) -> Result<(), TransferFailure> {
+        let sftp = ctx
+            .sftp
+            .as_ref()
+            .ok_or_else(|| TransferFailure::Error("SFTP session unavailable".to_string()))?;
+
         let display_name = src_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string());
 
-        let dest_meta = check_remote_exists(&ctx.sftp, dest_path, ctx.timeout_duration).await?;
+        let dest_meta = check_remote_exists(sftp, dest_path, ctx.timeout_duration).await?;
 
         let (final_dest, replace_existing) = if let Some(target_attrs) = dest_meta {
             let effective = policy_override.unwrap_or(conflict_policy);
@@ -703,7 +933,7 @@ impl TransferManager {
                 }
                 ResolvedAction::Rename => {
                     let unique =
-                        find_unique_remote_name(&ctx.sftp, dest_path, ctx.timeout_duration).await?;
+                        find_unique_remote_name(sftp, dest_path, ctx.timeout_duration).await?;
                     (unique, false)
                 }
             }
@@ -718,7 +948,7 @@ impl TransferManager {
             .map_err(|e| TransferFailure::Error(format!("Failed to open local file: {}", e)))?;
 
         let mut remote_file = tokio::select! {
-            res = ctx.sftp.create(temp_path.as_str()) => {
+            res = sftp.create(temp_path.as_str()) => {
                 res.map_err(|e| TransferFailure::Error(classify_sftp_error(e, &temp_path).to_string()))?
             }
             _ = wait_cancelled(cancel_rx) => {
@@ -789,12 +1019,12 @@ impl TransferManager {
 
         if let Err(err) = stream_res {
             drop(remote_file);
-            let _ = ctx.sftp.remove_file(temp_path.as_str()).await;
+            let _ = sftp.remove_file(temp_path.as_str()).await;
             return Err(err);
         }
 
         if written_this_file != file_size {
-            let _ = ctx.sftp.remove_file(temp_path.as_str()).await;
+            let _ = sftp.remove_file(temp_path.as_str()).await;
             return Err(TransferFailure::Error(format!(
                 "Upload byte mismatch for '{}': expected {} bytes, wrote {}",
                 src_path.display(),
@@ -805,21 +1035,17 @@ impl TransferManager {
 
         // Atomic promotion: remove existing destination if overwriting (SFTPv3 rename fails on existing target)
         if replace_existing {
-            let _ = ctx.sftp.remove_file(final_dest.as_str()).await;
+            let _ = sftp.remove_file(final_dest.as_str()).await;
         }
-        if let Err(e) = ctx
-            .sftp
-            .rename(temp_path.as_str(), final_dest.as_str())
-            .await
-        {
-            let _ = ctx.sftp.remove_file(temp_path.as_str()).await;
+        if let Err(e) = sftp.rename(temp_path.as_str(), final_dest.as_str()).await {
+            let _ = sftp.remove_file(temp_path.as_str()).await;
             return Err(TransferFailure::Error(
                 classify_sftp_error(e, &final_dest).to_string(),
             ));
         }
 
         // Preserve permissions & timestamps only when configured and supported
-        apply_remote_metadata(&ctx.sftp, &final_dest, mode, mtime_secs, ctx).await;
+        apply_remote_metadata(sftp, &final_dest, mode, mtime_secs, ctx).await;
 
         Ok(())
     }
@@ -830,6 +1056,17 @@ impl TransferManager {
         ctx: &ActiveTransferContext,
         cancel_rx: &mut watch::Receiver<bool>,
     ) -> Result<(), TransferFailure> {
+        if let TransferClient::Scp { ssh_handle } = &ctx.client {
+            return self
+                .execute_scp_download(job, ssh_handle, ctx, cancel_rx)
+                .await;
+        }
+
+        let sftp = ctx
+            .sftp
+            .as_ref()
+            .ok_or_else(|| TransferFailure::Error("SFTP session unavailable".to_string()))?;
+
         let job_id = &job.id.0;
         let mut tracker = SpeedTracker::new();
         let mut last_emit = Instant::now() - PROGRESS_THROTTLE;
@@ -838,7 +1075,7 @@ impl TransferManager {
         if !job.is_directory {
             let attrs = tokio::time::timeout(
                 ctx.timeout_duration,
-                ctx.sftp.metadata(job.source_path.as_str()),
+                sftp.metadata(job.source_path.as_str()),
             )
             .await
             .map_err(|_| TransferFailure::Error("Timed out reading remote metadata".to_string()))?
@@ -888,7 +1125,7 @@ impl TransferManager {
 
         // Recursive directory download
         let (rel_dirs, files, total_bytes) =
-            collect_remote_tree(&ctx.sftp, &job.source_path, ctx.timeout_duration)
+            collect_remote_tree(sftp, &job.source_path, ctx.timeout_duration)
                 .await
                 .map_err(TransferFailure::Error)?;
         let total_files = files.len() as u64;
@@ -1062,8 +1299,13 @@ impl TransferManager {
             Uuid::new_v4()
         ));
 
+        let sftp = ctx
+            .sftp
+            .as_ref()
+            .ok_or_else(|| TransferFailure::Error("SFTP session unavailable".to_string()))?;
+
         let mut remote_file = tokio::select! {
-            res = ctx.sftp.open(src_path) => {
+            res = sftp.open(src_path) => {
                 res.map_err(|e| TransferFailure::Error(classify_sftp_error(e, src_path).to_string()))?
             }
             _ = wait_cancelled(cancel_rx) => {
@@ -1792,8 +2034,9 @@ mod tests {
         tokio::fs::create_dir_all(&temp_base).await.unwrap();
 
         let ctx = session_manager.active_transfer_context().await.unwrap();
+        let sftp = ctx.sftp.as_ref().unwrap();
         let remote_test_dir = format!("/tmp/linuxscp_xfer_test_{}", Uuid::new_v4());
-        ctx.sftp.create_dir(remote_test_dir.as_str()).await.unwrap();
+        sftp.create_dir(remote_test_dir.as_str()).await.unwrap();
 
         // 1. Small file upload + download
         let small_local = temp_base.join("hello.txt");
@@ -1874,8 +2117,7 @@ mod tests {
         )
         .await;
         assert_eq!(rename_done.state, TransferState::Completed);
-        assert!(ctx
-            .sftp
+        assert!(sftp
             .try_exists(format!("{}/hello (1).txt", remote_test_dir))
             .await
             .unwrap());
@@ -2018,35 +2260,28 @@ mod tests {
         }
 
         // Cleanup remote & local test artifacts
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_file(format!("{}/hello.txt", remote_test_dir))
             .await;
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_file(format!("{}/hello (1).txt", remote_test_dir))
             .await;
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_file(format!("{}/large_2mb.bin", remote_test_dir))
             .await;
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_file(format!("{}/tree_src/nested/b.txt", remote_test_dir))
             .await;
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_dir(format!("{}/tree_src/nested", remote_test_dir))
             .await;
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_file(format!("{}/tree_src/a.txt", remote_test_dir))
             .await;
-        let _ = ctx
-            .sftp
+        let _ = sftp
             .remove_dir(format!("{}/tree_src", remote_test_dir))
             .await;
-        let _ = ctx.sftp.remove_dir(remote_test_dir.as_str()).await;
+        let _ = sftp.remove_dir(remote_test_dir.as_str()).await;
         let _ = tokio::fs::remove_dir_all(&temp_base).await;
         let _ = session_manager.disconnect().await;
     }

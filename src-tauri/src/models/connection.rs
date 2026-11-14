@@ -58,6 +58,8 @@ pub enum AuthMethod {
 pub struct SudoSftpConfig {
     /// Whether sudo SFTP elevation is enabled for this connection.
     pub enabled: bool,
+    /// Absolute path to the remote SFTP server binary (e.g. `/usr/lib/openssh/sftp-server`).
+    pub sftp_server_path: Option<String>,
     /// Custom remote command to execute through sudo (e.g., `sudo -n /usr/lib/openssh/sftp-server`).
     pub custom_command: Option<String>,
 }
@@ -66,10 +68,45 @@ impl SudoSftpConfig {
     pub const DEFAULT_SFTP_SERVER_CMD: &'static str = "sudo -n /usr/lib/openssh/sftp-server";
 
     /// Resolves the actual command to execute for sudo SFTP.
-    pub fn effective_command(&self) -> &str {
-        self.custom_command
+    /// Prefers explicit `custom_command` if specified; otherwise formats `sudo -n <sftp_server_path>`
+    /// using `sftp_server_path` or falls back to the distribution default.
+    pub fn effective_command(&self) -> String {
+        if let Some(cmd) = self
+            .custom_command
             .as_deref()
-            .unwrap_or(Self::DEFAULT_SFTP_SERVER_CMD)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return cmd.to_string();
+        }
+        if let Some(path) = self
+            .sftp_server_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return format!("sudo -n {}", path);
+        }
+        Self::DEFAULT_SFTP_SERVER_CMD.to_string()
+    }
+
+    /// Resolves the target SFTP server binary path for sudoers documentation and validation.
+    pub fn effective_binary_path(&self) -> &str {
+        if let Some(path) = self
+            .sftp_server_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return path;
+        }
+        if let Some(cmd) = self.custom_command.as_deref() {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            if let Some(last) = parts.last() {
+                return last;
+            }
+        }
+        "/usr/lib/openssh/sftp-server"
     }
 }
 
@@ -221,6 +258,40 @@ impl ConnectionProfile {
             )));
         }
 
+        if self.sudo_sftp.enabled {
+            let cmd = self.sudo_sftp.effective_command();
+            let trimmed_cmd = cmd.trim();
+            if trimmed_cmd.is_empty() {
+                return Err(AppError::Validation(
+                    "Sudo SFTP server command cannot be empty when elevation is enabled"
+                        .to_string(),
+                ));
+            }
+            if !trimmed_cmd.starts_with("sudo") {
+                return Err(AppError::Validation(
+                    "Sudo SFTP server command must start with 'sudo'".to_string(),
+                ));
+            }
+            if !trimmed_cmd.contains("-n") {
+                return Err(AppError::Validation(
+                    "Sudo SFTP command must include '-n' for non-interactive execution (interactive password prompts corrupt the SFTP protocol stream)"
+                        .to_string(),
+                ));
+            }
+            let bin_path = self.sudo_sftp.effective_binary_path();
+            if !bin_path.starts_with('/') {
+                return Err(AppError::Validation(
+                    "Remote SFTP server binary must be an absolute path (e.g. /usr/lib/openssh/sftp-server)".to_string(),
+                ));
+            }
+            if bin_path == "internal-sftp" || bin_path.ends_with("/internal-sftp") {
+                return Err(AppError::Validation(
+                    "OpenSSH 'internal-sftp' is an in-process daemon mode and cannot be executed as an external binary via sudo. Please configure an external binary path like /usr/lib/openssh/sftp-server."
+                        .to_string(),
+                ));
+            }
+        }
+
         if let AuthMethod::PublicKey {
             ref private_key_path,
             ..
@@ -267,20 +338,44 @@ mod tests {
     fn test_sudo_sftp_command_resolution() {
         let default_config = SudoSftpConfig {
             enabled: true,
+            sftp_server_path: None,
             custom_command: None,
         };
         assert_eq!(
             default_config.effective_command(),
             SudoSftpConfig::DEFAULT_SFTP_SERVER_CMD
         );
+        assert_eq!(
+            default_config.effective_binary_path(),
+            "/usr/lib/openssh/sftp-server"
+        );
+
+        let binary_config = SudoSftpConfig {
+            enabled: true,
+            sftp_server_path: Some("/usr/libexec/openssh/sftp-server".to_string()),
+            custom_command: None,
+        };
+        assert_eq!(
+            binary_config.effective_command(),
+            "sudo -n /usr/libexec/openssh/sftp-server"
+        );
+        assert_eq!(
+            binary_config.effective_binary_path(),
+            "/usr/libexec/openssh/sftp-server"
+        );
 
         let custom_config = SudoSftpConfig {
             enabled: true,
+            sftp_server_path: None,
             custom_command: Some("sudo -n /opt/custom/sftp-server".to_string()),
         };
         assert_eq!(
             custom_config.effective_command(),
             "sudo -n /opt/custom/sftp-server"
+        );
+        assert_eq!(
+            custom_config.effective_binary_path(),
+            "/opt/custom/sftp-server"
         );
     }
 
@@ -359,6 +454,26 @@ mod tests {
         assert!(profile.validate().is_err());
 
         profile.protocol = ProtocolType::Sftp;
+        assert!(profile.validate().is_ok());
+
+        // Rejects interactive sudo (missing -n)
+        profile.sudo_sftp.custom_command = Some("sudo /usr/lib/openssh/sftp-server".to_string());
+        assert!(profile.validate().is_err());
+
+        // Rejects non-sudo commands
+        profile.sudo_sftp.custom_command = Some("/usr/lib/openssh/sftp-server".to_string());
+        assert!(profile.validate().is_err());
+
+        // Rejects internal-sftp daemon
+        profile.sudo_sftp.custom_command = Some("sudo -n internal-sftp".to_string());
+        assert!(profile.validate().is_err());
+
+        profile.sudo_sftp.custom_command = None;
+        profile.sudo_sftp.sftp_server_path = Some("internal-sftp".to_string());
+        assert!(profile.validate().is_err());
+
+        // Accepts valid configured server path
+        profile.sudo_sftp.sftp_server_path = Some("/usr/libexec/openssh/sftp-server".to_string());
         assert!(profile.validate().is_ok());
     }
 
