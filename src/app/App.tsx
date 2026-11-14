@@ -196,6 +196,7 @@ export function App() {
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newId);
+    setSiteManagerOpen(true);
   }, []);
 
   const handleSelectTab = useCallback((tabId: string) => {
@@ -462,26 +463,61 @@ export function App() {
 
   // Connect to a profile
   const handleConnectProfile = useCallback(
-    async (profile: ConnectionProfile, secret?: string) => {
+    async (profile: ConnectionProfile, secret?: string, inNewTab?: boolean) => {
       setHostKeyChallenge(null);
       setHostKeyModalError(null);
       lastConnectedProfileIdRef.current = profile.id;
       setSelectedProfileId(profile.id);
 
-      const targetTabId = activeTabId;
-      const targetSessionId = activeTab.sessionState.session?.session_id;
+      const isCurrentOccupied =
+        activeTab.sessionState.status.status === "Connected" ||
+        activeTab.sessionState.status.status === "Connecting" ||
+        activeTab.sessionState.status.status === "Reconnecting";
 
-      handleUpdateTab(targetTabId, {
-        title: profile.name || profile.host,
-        sessionState: {
-          status: { status: "Connecting" },
-          session: null,
-          trusted_host_key: null,
-        },
-        connectionError: null,
-        lastConnectedProfileId: profile.id,
-        canReconnect: true,
-      });
+      let targetTabId = activeTabId;
+      let targetSessionId: string | undefined = undefined;
+
+      if (inNewTab || isCurrentOccupied) {
+        tabCounterRef.current += 1;
+        const newId = `tab-${Date.now()}-${tabCounterRef.current}`;
+        const newTab: RemoteTabState = {
+          id: newId,
+          title: profile.name || profile.host,
+          sessionState: {
+            status: { status: "Connecting" },
+            session: null,
+            trusted_host_key: null,
+          },
+          connectionError: null,
+          currentPath: "",
+          parentPath: null,
+          homePath: null,
+          entries: [],
+          selectedPaths: new Set(),
+          focusedPath: undefined,
+          navHistory: createInitialRemoteNavState(),
+          savedPaths: [],
+          canReconnect: true,
+          lastConnectedProfileId: profile.id,
+        };
+        targetTabId = newId;
+        targetSessionId = undefined;
+        setTabs((prev) => [...prev, newTab]);
+        setActiveTabId(newId);
+      } else {
+        targetSessionId = undefined;
+        handleUpdateTab(targetTabId, {
+          title: profile.name || profile.host,
+          sessionState: {
+            status: { status: "Connecting" },
+            session: null,
+            trusted_host_key: null,
+          },
+          connectionError: null,
+          lastConnectedProfileId: profile.id,
+          canReconnect: true,
+        });
+      }
 
       try {
         const outcome = await IpcClient.connectSftpSession(
@@ -1039,8 +1075,8 @@ export function App() {
         isOpen={siteManagerOpen}
         onClose={() => setSiteManagerOpen(false)}
         onSelectProfileId={setSelectedProfileId}
-        onSelectAndConnect={(profile) => {
-          handleConnectProfile(profile);
+        onSelectAndConnect={(profile, inNewTab) => {
+          handleConnectProfile(profile, undefined, inNewTab);
         }}
         onOpenTerminal={(profile) => {
           setSelectedProfileId(profile.id);

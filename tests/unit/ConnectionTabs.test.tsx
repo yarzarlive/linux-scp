@@ -261,4 +261,39 @@ describe("Connection Tabs Integration", () => {
       "sess-2"
     );
   });
+
+  it("handles adding new tabs and renders all tabs in the tab strip", () => {
+    const tab1 = createConnectedTab("tab-1", "Production Web", "sess-1", "/var/www", [mockEntry1]);
+    const tab2 = createConnectedTab("tab-2", "Staging DB", "sess-2", "/var/lib/mysql", []);
+    const tab3 = createDefaultTabState("tab-3", "Remote 3");
+
+    const onSelectTab = vi.fn();
+    const onCloseTab = vi.fn();
+    const onAddTab = vi.fn();
+
+    render(
+      <RemotePane
+        tabs={[tab1, tab2, tab3]}
+        activeTabId="tab-2"
+        onSelectTab={onSelectTab}
+        onCloseTab={onCloseTab}
+        onAddTab={onAddTab}
+      />
+    );
+
+    const renderedTabs = screen.getAllByRole("tab");
+    expect(renderedTabs).toHaveLength(3);
+    expect(screen.getByText("Production Web")).toBeInTheDocument();
+    expect(screen.getByText("Staging DB")).toBeInTheDocument();
+    expect(screen.getByText("Remote 3")).toBeInTheDocument();
+
+    // Tab 2 is active
+    expect(renderedTabs[1]).toHaveAttribute("aria-selected", "true");
+    expect(renderedTabs[0]).toHaveAttribute("aria-selected", "false");
+
+    // Close button appears for tabs when > 1 tab exists
+    const closeBtn = screen.getByLabelText("Close tab Production Web");
+    fireEvent.click(closeBtn);
+    expect(onCloseTab).toHaveBeenCalledWith("tab-1");
+  });
 });

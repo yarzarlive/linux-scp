@@ -35,7 +35,7 @@ import { ConfirmDialog } from "../Common/ConfirmDialog";
 interface SiteManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectAndConnect?: (profile: ConnectionProfile) => void;
+  onSelectAndConnect?: (profile: ConnectionProfile, inNewTab?: boolean) => void;
   onOpenTerminal?: (profile: ConnectionProfile) => void;
   onSelectProfileId?: (profileId: string | null) => void;
   initialProfileId?: string;
@@ -433,7 +433,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   }, [contextMenu]);
 
   // Handle direct connection (on double-click or context menu "Connect")
-  const handleDirectConnect = async (profileId: string) => {
+  const handleDirectConnect = async (profileId: string, inNewTab = false) => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
@@ -442,7 +442,11 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
           ? formProfile
           : await IpcClient.getConnectionProfile(profileId);
       if (onSelectAndConnect) {
-        onSelectAndConnect(profile);
+        if (inNewTab) {
+          onSelectAndConnect(profile, true);
+        } else {
+          onSelectAndConnect(profile);
+        }
       } else {
         await IpcClient.connectSftpSession(profile.id);
       }
@@ -555,12 +559,19 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   };
 
   // Save profile handler
-  const handleSave = async (action: "save" | "connect" | "terminal" = "save") => {
+  const handleSave = async (
+    action: "save" | "connect" | "connect-new-tab" | "terminal" = "save"
+  ) => {
     if (!formProfile) return;
 
     if (sitesLocked) {
       if (action === "connect") {
         onSelectAndConnect?.(formProfile);
+        onClose();
+        return;
+      }
+      if (action === "connect-new-tab") {
+        onSelectAndConnect?.(formProfile, true);
         onClose();
         return;
       }
@@ -612,6 +623,9 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
       if (action === "connect") {
         onSelectAndConnect?.(saved);
+        onClose();
+      } else if (action === "connect-new-tab") {
+        onSelectAndConnect?.(saved, true);
         onClose();
       } else if (action === "terminal") {
         if (onOpenTerminal) {
@@ -1414,6 +1428,16 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
             <button
               type="button"
+              onClick={() => handleSave("connect-new-tab")}
+              disabled={!formProfile || isSaving}
+              className="px-3.5 py-1.5 text-xs rounded font-medium bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors disabled:opacity-50 cursor-pointer"
+              title="Open connection in a new remote tab"
+            >
+              Open in New Tab
+            </button>
+
+            <button
+              type="button"
               onClick={() => handleSave("connect")}
               disabled={!formProfile || isSaving}
               className="px-4 py-1.5 text-xs rounded font-medium bg-commander-accent hover:bg-commander-accent/90 text-commander-dark transition-colors disabled:opacity-50 cursor-pointer"
@@ -1441,13 +1465,27 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
             onClick={() => {
               const target = contextMenu.profile;
               setContextMenu(null);
-              handleDirectConnect(target.id);
+              handleDirectConnect(target.id, false);
             }}
             className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors text-emerald-400 hover:text-emerald-300"
             role="menuitem"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span className="font-medium">Connect</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const target = contextMenu.profile;
+              setContextMenu(null);
+              handleDirectConnect(target.id, true);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors text-sky-400 hover:text-sky-300"
+            role="menuitem"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="font-medium">Open in New Tab</span>
           </button>
 
           <button
