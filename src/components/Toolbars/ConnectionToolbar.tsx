@@ -1,6 +1,5 @@
 import React from "react";
 import {
-  PlusCircle,
   Server,
   Unplug,
   RefreshCw,
@@ -17,7 +16,6 @@ interface ConnectionToolbarProps {
   canReconnect?: boolean;
   canOpenTerminal?: boolean;
   activeSession?: ConnectionSession | null;
-  onNewSession?: () => void;
   onSiteManager?: () => void;
   onDisconnect?: () => void;
   onReconnect?: () => void;
@@ -32,7 +30,6 @@ export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
   canReconnect = false,
   canOpenTerminal = false,
   activeSession = null,
-  onNewSession,
   onSiteManager,
   onDisconnect,
   onReconnect,
@@ -50,16 +47,6 @@ export const ConnectionToolbar: React.FC<ConnectionToolbarProps> = ({
       className="flex items-center justify-between px-3 py-1.5 bg-commander-surface/90 border-b border-commander-border text-xs select-none"
     >
       <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={onNewSession}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors"
-          title="Open a new SSH/SFTP connection dialog"
-        >
-          <PlusCircle className="w-3.5 h-3.5 text-commander-accent" />
-          <span>New Session</span>
-        </button>
-
         <button
           type="button"
           onClick={onSiteManager}

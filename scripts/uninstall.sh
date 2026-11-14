@@ -77,7 +77,7 @@ if [[ -f "${APP_DIR}/linuxscp.desktop" ]]; then
 fi
 
 # 3. Remove icons
-for size in 32x32 128x128 256x256; do
+for size in 32x32 64x64 128x128 256x256 512x512; do
     icon_file="${ICON_BASE}/${size}/apps/linuxscp.png"
     if [[ -f "${icon_file}" ]]; then
         echo "Removing icon: ${icon_file}..."

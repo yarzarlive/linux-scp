@@ -8,9 +8,9 @@ use crate::protocol::scp::{establish_scp_connection, ActiveScpConnection, ScpFil
 use crate::protocol::sftp::{
     apply_remote_permissions_with_adapter, check_sftp_path_is_dir, establish_sftp_connection,
     join_posix_path, list_sftp_directory, normalize_posix_path, parent_posix_path,
-    parse_octal_mode, resolve_name_to_id_via_getent, resolve_remote_identity_via_getent,
-    validate_remote_entry_name, ActiveSftpConnection, ConnectOutcome, RemoteDirectoryListing,
-    SftpFileSystemAdapter,
+    parse_octal_mode, resolve_identities_for_entries, resolve_name_to_id_via_getent,
+    resolve_remote_identity_via_getent, validate_remote_entry_name, ActiveSftpConnection,
+    ConnectOutcome, RemoteDirectoryListing, SftpFileSystemAdapter,
 };
 use crate::protocol::RemoteFileSystem;
 use russh::client::Handle;
@@ -287,7 +287,7 @@ impl SessionManager {
             }
         };
 
-        let listing = list_sftp_directory(
+        let mut listing = list_sftp_directory(
             &sftp,
             path.as_deref(),
             &current_path,
@@ -296,6 +296,19 @@ impl SessionManager {
             timeout_duration,
         )
         .await?;
+
+        // Resolve user and group names for remote entries using session getent cache
+        {
+            let guard = self.inner.read().await;
+            if let Some(ActiveBackendConnection::Sftp(ref sftp_conn)) = guard.active {
+                resolve_identities_for_entries(
+                    &sftp_conn.ssh_handle,
+                    &sftp_conn.identity_cache,
+                    &mut listing.entries,
+                )
+                .await;
+            }
+        }
 
         // Update current_remote_path in session metadata
         {
@@ -623,7 +636,43 @@ impl SessionManager {
         })?;
         match active {
             ActiveBackendConnection::Sftp(sftp) => {
-                Ok(resolve_remote_identity_via_getent(&sftp.ssh_handle, uid, gid).await)
+                let cached = {
+                    let cache = sftp.identity_cache.lock().await;
+                    let u = uid.and_then(|u| cache.uids.get(&u).cloned().flatten());
+                    let g = gid.and_then(|g| cache.gids.get(&g).cloned().flatten());
+                    (u, g)
+                };
+
+                let user_name = if let Some(un) = cached.0 {
+                    Some(un)
+                } else if let Some(u) = uid {
+                    let res =
+                        resolve_remote_identity_via_getent(&sftp.ssh_handle, Some(u), None).await;
+                    let mut cache = sftp.identity_cache.lock().await;
+                    cache.uids.insert(u, res.user_name.clone());
+                    res.user_name
+                } else {
+                    None
+                };
+
+                let group_name = if let Some(gn) = cached.1 {
+                    Some(gn)
+                } else if let Some(g) = gid {
+                    let res =
+                        resolve_remote_identity_via_getent(&sftp.ssh_handle, None, Some(g)).await;
+                    let mut cache = sftp.identity_cache.lock().await;
+                    cache.gids.insert(g, res.group_name.clone());
+                    res.group_name
+                } else {
+                    None
+                };
+
+                Ok(FileOwnership {
+                    uid,
+                    gid,
+                    user_name,
+                    group_name,
+                })
             }
             ActiveBackendConnection::Scp(scp) => {
                 let handle = scp.ssh_handle.lock().await;

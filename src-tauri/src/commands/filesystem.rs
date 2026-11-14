@@ -3,6 +3,7 @@ use crate::filesystem::local::{
     create_directory, create_file, delete_entries, get_home_dir, list_directory, rename_entry,
     LocalDirectoryListing,
 };
+use crate::persistence::{Database, PreferencesRepository};
 
 /// Lists entries in a local directory, expanding tildes and resolving canonical paths.
 #[tauri::command]
@@ -57,6 +58,30 @@ pub async fn delete_local_entries(paths: Vec<String>) -> Result<Vec<String>, App
     tokio::task::spawn_blocking(move || delete_entries(paths))
         .await
         .map_err(|e| AppError::Internal(format!("Filesystem task joined with error: {}", e)))?
+}
+
+/// Retrieves saved directory paths (bookmarks) for a pane (e.g. "local" or "remote").
+#[tauri::command]
+pub async fn get_saved_paths(pane_type: String) -> Result<Vec<String>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let db = Database::open_default()?;
+        let repo = PreferencesRepository::new(&db);
+        repo.get_saved_paths(&pane_type)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to retrieve saved paths: {}", e)))?
+}
+
+/// Persists saved directory paths (bookmarks) for a pane (e.g. "local" or "remote").
+#[tauri::command]
+pub async fn save_saved_paths(pane_type: String, paths: Vec<String>) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || {
+        let db = Database::open_default()?;
+        let repo = PreferencesRepository::new(&db);
+        repo.set_saved_paths(&pane_type, &paths)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to save paths: {}", e)))?
 }
 
 #[cfg(test)]

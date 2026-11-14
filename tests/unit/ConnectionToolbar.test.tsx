@@ -4,7 +4,6 @@ import { ConnectionToolbar } from "../../src/components/Toolbars/ConnectionToolb
 
 describe("ConnectionToolbar Component", () => {
   it("renders toolbar actions and status", () => {
-    const handleNewSession = vi.fn();
     const handleSiteManager = vi.fn();
     const handleDisconnect = vi.fn();
 
@@ -12,22 +11,18 @@ describe("ConnectionToolbar Component", () => {
       <ConnectionToolbar
         isConnected={false}
         hostKeyVerified={true}
-        onNewSession={handleNewSession}
         onSiteManager={handleSiteManager}
         onDisconnect={handleDisconnect}
       />
     );
 
-    expect(screen.getByText("New Session")).toBeInTheDocument();
+    expect(screen.queryByText("New Session")).not.toBeInTheDocument();
     expect(screen.getByText("Site Manager")).toBeInTheDocument();
     expect(screen.getByText("Strict Host-Key Verification")).toBeInTheDocument();
     expect(screen.getByText("Remote Disconnected")).toBeInTheDocument();
 
     const disconnectBtn = screen.getByRole("button", { name: /Disconnect/i });
     expect(disconnectBtn).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("button", { name: /New Session/i }));
-    expect(handleNewSession).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: /Site Manager/i }));
     expect(handleSiteManager).toHaveBeenCalledTimes(1);

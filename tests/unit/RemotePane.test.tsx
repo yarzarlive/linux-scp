@@ -237,6 +237,71 @@ describe("RemotePane Component", () => {
     expect(handleDisconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("renders actual username and group name instead of user id and group id", async () => {
+    const listing: RemoteDirectoryListing = {
+      current_path: "/home/ubuntu",
+      parent_path: "/home",
+      home_path: "/home/ubuntu",
+      entries: [
+        {
+          name: "web_server.conf",
+          path: "/home/ubuntu/web_server.conf",
+          file_type: { type: "Regular" },
+          metadata: {
+            size: 1024,
+            modified_at_secs: 1700000100,
+            permissions: {
+              raw_mode: 0o040644,
+              user_read: true,
+              user_write: true,
+              user_execute: false,
+              group_read: true,
+              group_write: false,
+              group_execute: false,
+              other_read: true,
+              other_write: false,
+              other_execute: false,
+              set_uid: false,
+              set_gid: false,
+              sticky: false,
+            },
+            ownership: { uid: 1000, gid: 1000, user_name: "ubuntu", group_name: "ubuntu" },
+          },
+          is_hidden: false,
+        },
+        {
+          name: "nginx.conf",
+          path: "/home/ubuntu/nginx.conf",
+          file_type: { type: "Regular" },
+          metadata: {
+            size: 2048,
+            modified_at_secs: 1700000200,
+            permissions: undefined,
+            ownership: { uid: 0, gid: 0, user_name: "root", group_name: "root" },
+          },
+          is_hidden: false,
+        },
+      ],
+    };
+
+    vi.mocked(IpcClient.listRemoteDirectory).mockResolvedValueOnce(listing);
+
+    render(
+      <RemotePane
+        sessionState={makeConnectedState()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("web_server.conf")).toBeInTheDocument();
+      expect(screen.getByText("nginx.conf")).toBeInTheDocument();
+    });
+
+    // Actual username and group name are displayed instead of numeric IDs
+    expect(screen.getByText("ubuntu:ubuntu")).toBeInTheDocument();
+    expect(screen.getByText("root:root")).toBeInTheDocument();
+  });
+
   it("renders empty directory state", async () => {
     vi.mocked(IpcClient.listRemoteDirectory).mockResolvedValueOnce({
       current_path: "/home/ubuntu/empty",
@@ -631,7 +696,9 @@ describe("RemotePane Component", () => {
     expect(screen.getByText("SCP (TRANSFER-ONLY)")).toBeInTheDocument();
     const scpPanel = screen.getByTestId("scp-transfer-panel");
     expect(scpPanel).toBeInTheDocument();
-    expect(within(scpPanel).getByText(/SCP Protocol Active • Transfer-Only Mode/)).toBeInTheDocument();
+    expect(
+      within(scpPanel).getByText(/SCP Protocol Active • Transfer-Only Mode/)
+    ).toBeInTheDocument();
 
     // Verify unsupported operation buttons are not rendered
     expect(screen.queryByTitle(/New Remote Folder/)).not.toBeInTheDocument();
@@ -642,7 +709,9 @@ describe("RemotePane Component", () => {
 
     // Verify status bar surfaces SCP capability limitations honestly
     expect(
-      screen.getByText(/SCP Mode • Direct transfer queue only \(Browsing & file management unsupported\)/)
+      screen.getByText(
+        /SCP Mode • Direct transfer queue only \(Browsing & file management unsupported\)/
+      )
     ).toBeInTheDocument();
 
     // Verify direct download triggers onDownload with exact path

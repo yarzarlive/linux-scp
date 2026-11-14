@@ -425,51 +425,51 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
           <button
             type="button"
             onClick={handleOpenCreateDir}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors text-[11px]"
+            className="p-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors"
             title="New Folder (F7)"
+            aria-label="New Folder (F7)"
           >
-            <FolderPlus className="w-3 h-3 text-amber-400" />
-            <span>New Folder</span>
+            <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
           </button>
 
           <button
             type="button"
             onClick={handleOpenCreateFile}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors text-[11px]"
+            className="p-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors"
             title="New File"
+            aria-label="New File"
           >
-            <FilePlus className="w-3 h-3 text-commander-accent" />
-            <span>New File</span>
+            <FilePlus className="w-3.5 h-3.5 text-commander-accent" />
           </button>
 
           <button
             type="button"
             onClick={handleOpenRename}
             disabled={selectedPaths.size !== 1}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+            className={`p-1 rounded border transition-colors ${
               selectedPaths.size === 1
                 ? "bg-commander-dark hover:bg-commander-selected border-commander-border text-commander-text hover:text-white cursor-pointer"
                 : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
             }`}
             title="Rename Selected Item (F2)"
+            aria-label="Rename Selected Item (F2)"
           >
-            <Edit3 className="w-3 h-3 text-sky-400" />
-            <span>Rename</span>
+            <Edit3 className="w-3.5 h-3.5 text-sky-400" />
           </button>
 
           <button
             type="button"
             onClick={handleOpenDelete}
             disabled={selectedPaths.size === 0}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+            className={`p-1 rounded border transition-colors ${
               selectedPaths.size > 0
                 ? "bg-rose-950/40 hover:bg-rose-900/60 border-rose-900/60 text-rose-300 cursor-pointer"
                 : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
             }`}
             title="Delete Selected Items (Del)"
+            aria-label="Delete Selected Items (Del)"
           >
-            <Trash2 className="w-3 h-3 text-rose-400" />
-            <span>Delete</span>
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
           </button>
 
           {onUpload && (
@@ -477,15 +477,15 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
               type="button"
               onClick={() => onUpload(Array.from(selectedPaths))}
               disabled={!canUpload || selectedPaths.size === 0}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+              className={`p-1 rounded border transition-colors ${
                 canUpload && selectedPaths.size > 0
                   ? "bg-sky-950/60 hover:bg-sky-900/70 border-sky-700/60 text-sky-200 cursor-pointer"
                   : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
               }`}
               title="Upload Selected to Remote Pane"
+              aria-label="Upload Selected to Remote Pane"
             >
-              <Upload className="w-3 h-3 text-sky-400" />
-              <span>Upload</span>
+              <Upload className="w-3.5 h-3.5 text-sky-400" />
             </button>
           )}
         </div>
@@ -494,6 +494,7 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
       {/* Address & Navigation Bar */}
       <AddressBar
         path={currentPath}
+        paneType="local"
         onNavigate={handleNavigate}
         onBack={handleBack}
         canGoBack={historyIndex > 0}

@@ -99,4 +99,68 @@ describe("IpcClient", () => {
       mode: "prompt",
     });
   });
+
+  it("invokes launch_ssh_terminal with profileId and optional remoteDirectory", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      profile_id: "prof-1",
+      profile_name: "Web Server",
+      host: "10.0.0.1",
+      port: 22,
+      username: "ubuntu",
+      terminal_binary: "gnome-terminal",
+      pid: 1234,
+      status: "ProcessSpawned",
+      message: "Launched terminal in /var/www",
+    });
+
+    const res = await IpcClient.launchSshTerminal("prof-1", "/var/www");
+    expect(res.status).toBe("ProcessSpawned");
+    expect(invoke).toHaveBeenCalledWith("launch_ssh_terminal", {
+      profileId: "prof-1",
+      remoteDirectory: "/var/www",
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      profile_id: "prof-2",
+      profile_name: "DB Server",
+      host: "10.0.0.2",
+      port: 22,
+      username: "ubuntu",
+      terminal_binary: "gnome-terminal",
+      pid: 1235,
+      status: "ProcessSpawned",
+      message: "Launched terminal",
+    });
+
+    await IpcClient.launchSshTerminal("prof-2");
+    expect(invoke).toHaveBeenCalledWith("launch_ssh_terminal", {
+      profileId: "prof-2",
+      remoteDirectory: undefined,
+    });
+  });
+
+  it("retrieves and persists saved directory paths across panes", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(["/home/user", "/var/log"]);
+    const localPaths = await IpcClient.getSavedPaths("local");
+    expect(localPaths).toEqual(["/home/user", "/var/log"]);
+    expect(invoke).toHaveBeenCalledWith("get_saved_paths", { paneType: "local" });
+
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await IpcClient.saveSavedPaths("remote", ["/etc/nginx", "/var/www"]);
+    expect(invoke).toHaveBeenCalledWith("save_saved_paths", {
+      paneType: "remote",
+      paths: ["/etc/nginx", "/var/www"],
+    });
+  });
+
+  it("retrieves and persists theme preference via IPC", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce("light");
+    const theme = await IpcClient.getThemePreference();
+    expect(theme).toBe("light");
+    expect(invoke).toHaveBeenCalledWith("get_theme_preference", undefined);
+
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await IpcClient.setThemePreference("dark");
+    expect(invoke).toHaveBeenCalledWith("set_theme_preference", { theme: "dark" });
+  });
 });

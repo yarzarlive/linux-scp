@@ -1,4 +1,5 @@
 use crate::errors::AppError;
+use crate::persistence::{Database, PreferencesRepository};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -48,6 +49,30 @@ pub async fn ping_backend(payload: String) -> Result<PingResponse, AppError> {
         status: format!("ACK: {}", payload),
         timestamp_ms,
     })
+}
+
+/// Retrieves the saved theme preference ("dark" or "light").
+#[tauri::command]
+pub async fn get_theme_preference() -> Result<String, AppError> {
+    tokio::task::spawn_blocking(|| {
+        let db = Database::open_default()?;
+        let repo = PreferencesRepository::new(&db);
+        repo.get_theme_preference()
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to retrieve theme: {}", e)))?
+}
+
+/// Persists the theme preference ("dark" or "light").
+#[tauri::command]
+pub async fn set_theme_preference(theme: String) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || {
+        let db = Database::open_default()?;
+        let repo = PreferencesRepository::new(&db);
+        repo.set_theme_preference(&theme)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Failed to save theme: {}", e)))?
 }
 
 #[cfg(test)]

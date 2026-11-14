@@ -24,7 +24,7 @@ use commands::desktop::{
 };
 use commands::filesystem::{
     create_local_directory, create_local_file, delete_local_entries, get_home_directory,
-    list_local_directory, rename_local_entry,
+    get_saved_paths, list_local_directory, rename_local_entry, save_saved_paths,
 };
 use commands::profile::{
     check_keyring_status, delete_connection_profile, duplicate_connection_profile,
@@ -36,7 +36,7 @@ use commands::session::{
     list_known_hosts, list_remote_directory, reconnect_sftp_session, rename_remote_entry,
     resolve_remote_identity, set_remote_ownership, set_remote_permissions, trust_host_key,
 };
-use commands::system::{get_system_info, ping_backend};
+use commands::system::{get_system_info, get_theme_preference, ping_backend, set_theme_preference};
 use commands::terminal::{get_terminal_environment, launch_ssh_terminal, save_terminal_preference};
 use commands::transfer::{
     cancel_transfer, clear_finished_transfers, enqueue_downloads, enqueue_uploads, list_transfers,
@@ -105,12 +105,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_system_info,
             ping_backend,
+            get_theme_preference,
+            set_theme_preference,
             list_local_directory,
             get_home_directory,
             create_local_directory,
             create_local_file,
             rename_local_entry,
             delete_local_entries,
+            get_saved_paths,
+            save_saved_paths,
             list_connection_profiles,
             get_connection_profile,
             save_connection_profile,

@@ -283,6 +283,10 @@ impl<'a> ProfileRepository<'a> {
             "DELETE FROM connection_remote_state WHERE profile_id = ?1",
             [id],
         );
+        let _ = conn.execute(
+            "DELETE FROM app_preferences WHERE key = ?1",
+            [&format!("saved_paths_remote:{}", id)],
+        );
         Ok(())
     }
 

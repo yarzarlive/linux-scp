@@ -242,6 +242,7 @@ pub struct TerminalLaunchPlan {
     pub terminal_args: Vec<String>,
     pub ssh_executable: String,
     pub ssh_args: Vec<String>,
+    pub remote_directory: Option<String>,
 }
 
 /// Returns the directories listed in the current process `PATH` environment variable.
@@ -489,14 +490,19 @@ pub fn resolve_terminal_for_preference(
     }
 }
 
-/// Constructs distinct OpenSSH command-line arguments for a connection profile.
+/// Constructs distinct OpenSSH command-line arguments for a connection profile and optional remote directory.
 ///
 /// Security invariants:
 /// - Passes `-p <port>`, `-l <username>`, optional `-i <identity_file>`, and `<host>` as distinct arguments.
+/// - If `remote_directory` is specified, adds `-t` for interactive pseudo-terminal allocation
+///   and a POSIX single-quoted `cd -- <dir> 2>/dev/null || cd ~; exec ${SHELL:-/bin/bash} -l` command.
 /// - Never includes passwords, passphrases, or secret tokens in arguments.
 /// - Rejects values starting with `-` or containing whitespace/control characters to prevent option injection.
 /// - Preserves the user's normal `~/.ssh/config` and `~/.ssh/known_hosts` behavior.
-pub fn build_ssh_args(profile: &ConnectionProfile) -> Result<Vec<String>, AppError> {
+pub fn build_ssh_args_with_directory(
+    profile: &ConnectionProfile,
+    remote_directory: Option<&str>,
+) -> Result<Vec<String>, AppError> {
     profile.validate()?;
 
     match profile.protocol {
@@ -542,12 +548,20 @@ pub fn build_ssh_args(profile: &ConnectionProfile) -> Result<Vec<String>, AppErr
         ));
     }
 
-    let mut args = vec![
-        "-p".to_string(),
-        profile.port.to_string(),
-        "-l".to_string(),
-        username.to_string(),
-    ];
+    let mut args = Vec::new();
+
+    let target_dir = remote_directory
+        .map(str::trim)
+        .filter(|d| !d.is_empty() && *d != "~");
+
+    if target_dir.is_some() {
+        args.push("-t".to_string());
+    }
+
+    args.push("-p".to_string());
+    args.push(profile.port.to_string());
+    args.push("-l".to_string());
+    args.push(username.to_string());
 
     if let AuthMethod::PublicKey {
         ref private_key_path,
@@ -584,16 +598,30 @@ pub fn build_ssh_args(profile: &ConnectionProfile) -> Result<Vec<String>, AppErr
 
     args.push(host.to_string());
 
+    if let Some(dir) = target_dir {
+        let escaped_dir = format!("'{}'", dir.replace('\'', r"'\''"));
+        let remote_cmd = format!(
+            "cd -- {} 2>/dev/null || cd ~; exec ${{SHELL:-/bin/bash}} -l",
+            escaped_dir
+        );
+        args.push(remote_cmd);
+    }
+
     Ok(args)
 }
 
-/// Builds a complete, verified launch plan combining the resolved terminal emulator and OpenSSH arguments.
-pub fn build_terminal_launch_plan(
+pub fn build_ssh_args(profile: &ConnectionProfile) -> Result<Vec<String>, AppError> {
+    build_ssh_args_with_directory(profile, None)
+}
+
+/// Builds a complete, verified launch plan combining the resolved terminal emulator, OpenSSH arguments, and optional remote directory.
+pub fn build_terminal_launch_plan_with_directory(
     profile: &ConnectionProfile,
     preference: &TerminalPreference,
     search_dirs: &[PathBuf],
+    remote_directory: Option<&str>,
 ) -> Result<TerminalLaunchPlan, AppError> {
-    let ssh_args = build_ssh_args(profile)?;
+    let ssh_args = build_ssh_args_with_directory(profile, remote_directory)?;
     let resolved_terminal = resolve_terminal_for_preference(preference, search_dirs)?;
     let ssh_path = resolve_ssh_binary_in_paths(search_dirs)?;
     let ssh_executable = ssh_path.to_string_lossy().into_owned();
@@ -608,7 +636,18 @@ pub fn build_terminal_launch_plan(
         terminal_args,
         ssh_executable,
         ssh_args,
+        remote_directory: remote_directory
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty()),
     })
+}
+
+pub fn build_terminal_launch_plan(
+    profile: &ConnectionProfile,
+    preference: &TerminalPreference,
+    search_dirs: &[PathBuf],
+) -> Result<TerminalLaunchPlan, AppError> {
+    build_terminal_launch_plan_with_directory(profile, preference, search_dirs, None)
 }
 
 /// Spawns the external terminal emulator executing the OpenSSH session using direct `Command` argv.
@@ -653,12 +692,19 @@ pub fn spawn_terminal_plan(
         ""
     };
 
+    let dir_notice = if let Some(ref dir) = plan.remote_directory {
+        format!(" in '{}'", dir)
+    } else {
+        String::new()
+    };
+
     let message = format!(
-        "Launched '{}' starting OpenSSH for {}@{}:{}. Complete any required authentication or host-key prompt inside the terminal window.{}",
+        "Launched '{}' starting OpenSSH for {}@{}:{}{}. Complete any required authentication or host-key prompt inside the terminal window.{}",
         plan.terminal_binary,
         profile.username.trim(),
         profile.host.trim(),
         profile.port,
+        dir_notice,
         elevation_notice
     );
 
@@ -788,6 +834,55 @@ mod tests {
         );
         assert!(args[5].ends_with("/.ssh/id_rsa"));
         assert_eq!(args[6], "192.168.122.10");
+    }
+
+    #[test]
+    fn test_build_ssh_args_with_remote_directory() {
+        let profile = ConnectionProfile::new(
+            "Ubuntu Test".to_string(),
+            ProtocolType::Sftp,
+            "192.168.122.10".to_string(),
+            "ubuntu".to_string(),
+            AuthMethod::Password,
+        );
+
+        // 1. With standard directory path
+        let args = build_ssh_args_with_directory(&profile, Some("/var/www"))
+            .expect("Should construct ssh args with remote directory");
+        assert_eq!(args[0], "-t");
+        assert_eq!(args[1], "-p");
+        assert_eq!(args[2], "22");
+        assert_eq!(args[3], "-l");
+        assert_eq!(args[4], "ubuntu");
+        assert_eq!(args[5], "192.168.122.10");
+        assert_eq!(
+            args[6],
+            "cd -- '/var/www' 2>/dev/null || cd ~; exec ${SHELL:-/bin/bash} -l"
+        );
+
+        // 2. With path containing single quotes and spaces
+        let args_quotes = build_ssh_args_with_directory(&profile, Some("/home/ubuntu/it's a test"))
+            .expect("Should escape single quotes in path");
+        assert_eq!(args_quotes[0], "-t");
+        assert_eq!(
+            args_quotes[6],
+            "cd -- '/home/ubuntu/it'\\''s a test' 2>/dev/null || cd ~; exec ${SHELL:-/bin/bash} -l"
+        );
+
+        // 3. With home or empty directory (should not add -t or cd command)
+        let args_home = build_ssh_args_with_directory(&profile, Some("~"))
+            .expect("Should not add cd for home dir");
+        assert_eq!(
+            args_home,
+            vec!["-p", "22", "-l", "ubuntu", "192.168.122.10"]
+        );
+
+        let args_empty = build_ssh_args_with_directory(&profile, Some("   "))
+            .expect("Should not add cd for empty dir");
+        assert_eq!(
+            args_empty,
+            vec!["-p", "22", "-l", "ubuntu", "192.168.122.10"]
+        );
     }
 
     #[test]
@@ -1094,7 +1189,7 @@ mod tests {
 
         for _ in 0..80 {
             if let Ok(content) = fs::read_to_string(&output_file) {
-                if content.contains("LIVE_TERMINAL_OK") {
+                if content.contains("LIVE_TERMINAL_OK") && content.contains("ubuntu") {
                     break;
                 }
             }

@@ -92,8 +92,10 @@ install_icon() {
 
 echo "Installing application icons to ${ICON_BASE}..."
 install_icon "${ICONS_SRC}/32x32.png" "32x32"
+install_icon "${ICONS_SRC}/64x64.png" "64x64"
 install_icon "${ICONS_SRC}/128x128.png" "128x128"
 install_icon "${ICONS_SRC}/128x128@2x.png" "256x256"
+install_icon "${ICONS_SRC}/icon.png" "512x512"
 
 # 4. Install AppStream metadata
 if [[ -f "${PROJECT_ROOT}/assets/com.linuxscp.client.metainfo.xml" ]]; then

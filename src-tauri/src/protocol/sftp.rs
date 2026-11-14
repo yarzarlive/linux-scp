@@ -15,6 +15,7 @@ use russh_sftp::client::error::Error as SftpClientError;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{FileAttributes, OpenFlags, StatusCode};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -130,6 +131,14 @@ impl Handler for SshClientHandler {
     }
 }
 
+/// Cache of resolved numeric UIDs and GIDs to their system names for the lifetime of an active session.
+#[derive(Debug, Default)]
+pub struct RemoteIdentityCache {
+    pub uids: HashMap<u32, Option<String>>,
+    pub gids: HashMap<u32, Option<String>>,
+    pub getent_disabled: bool,
+}
+
 /// Live SFTP session holding the underlying SSH handle and initialized SFTP client.
 pub struct ActiveSftpConnection {
     pub session_meta: ConnectionSession,
@@ -137,6 +146,7 @@ pub struct ActiveSftpConnection {
     pub trusted_host_key: KnownHostEntry,
     pub ssh_handle: Handle<SshClientHandler>,
     pub sftp_session: Arc<SftpSession>,
+    pub identity_cache: Arc<tokio::sync::Mutex<RemoteIdentityCache>>,
 }
 
 impl ActiveSftpConnection {
@@ -404,6 +414,7 @@ pub async fn establish_sftp_connection(
         trusted_host_key,
         ssh_handle,
         sftp_session: Arc::new(sftp_session),
+        identity_cache: Arc::new(tokio::sync::Mutex::new(RemoteIdentityCache::default())),
     }))
 }
 
@@ -1343,6 +1354,186 @@ async fn exec_ssh_short_command(
     Ok(String::from_utf8_lossy(&stdout).trim().to_string())
 }
 
+/// Executes a short command over SSH capturing stdout without failing on non-zero exit code (such as getent returning 2 on partial matches).
+pub async fn exec_ssh_batch_lookup(
+    ssh_handle: &Handle<SshClientHandler>,
+    command: &str,
+    timeout: Duration,
+) -> Result<String, AppError> {
+    let mut channel = tokio::time::timeout(timeout, ssh_handle.channel_open_session())
+        .await
+        .map_err(|_| AppError::Network("Timed out opening SSH channel for batch lookup".into()))?
+        .map_err(|e| AppError::Protocol(format!("SSH channel open failed: {}", e)))?;
+
+    tokio::time::timeout(timeout, channel.exec(true, command))
+        .await
+        .map_err(|_| AppError::Network("Timed out executing remote batch lookup".into()))?
+        .map_err(|e| AppError::Protocol(format!("Remote exec failed: {}", e)))?;
+
+    let mut stdout = Vec::new();
+
+    let read_fut = async {
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                russh::ChannelMsg::Data { data } => {
+                    if stdout.len() + data.len() <= 65536 {
+                        stdout.extend_from_slice(&data);
+                    }
+                }
+                russh::ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+    };
+
+    let _ = tokio::time::timeout(timeout, read_fut).await;
+    let _ = channel.close().await;
+
+    Ok(String::from_utf8_lossy(&stdout).to_string())
+}
+
+/// Resolves numeric UIDs and GIDs in directory entries to usernames and group names
+/// using batch getent commands over the SSH transport, caching results in the session.
+pub async fn resolve_identities_for_entries(
+    ssh_handle: &Handle<SshClientHandler>,
+    cache_mutex: &Arc<tokio::sync::Mutex<RemoteIdentityCache>>,
+    entries: &mut [FileEntry],
+) {
+    if entries.is_empty() {
+        return;
+    }
+
+    // Step 1: Collect unique UIDs and GIDs that need resolution
+    let mut missing_uids = BTreeSet::new();
+    let mut missing_gids = BTreeSet::new();
+
+    {
+        let cache = cache_mutex.lock().await;
+        for entry in entries.iter() {
+            if let Some(ref own) = entry.metadata.ownership {
+                if own.user_name.is_none() {
+                    if let Some(uid) = own.uid {
+                        if !cache.uids.contains_key(&uid) {
+                            missing_uids.insert(uid);
+                        }
+                    }
+                }
+                if own.group_name.is_none() {
+                    if let Some(gid) = own.gid {
+                        if !cache.gids.contains_key(&gid) {
+                            missing_gids.insert(gid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Step 2: Query missing UIDs if getent is available
+    let getent_disabled = {
+        let cache = cache_mutex.lock().await;
+        cache.getent_disabled
+    };
+
+    if !getent_disabled && !missing_uids.is_empty() {
+        let uids_arg = missing_uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cmd = format!("getent passwd {}", uids_arg);
+        match exec_ssh_batch_lookup(ssh_handle, &cmd, Duration::from_secs(2)).await {
+            Ok(output) => {
+                let mut cache = cache_mutex.lock().await;
+                for line in output.lines() {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() >= 3 {
+                        let name = parts[0].trim();
+                        if let Ok(uid) = parts[2].trim().parse::<u32>() {
+                            if !name.is_empty() {
+                                cache.uids.insert(uid, Some(name.to_string()));
+                            }
+                        }
+                    }
+                }
+                // Mark any requested UID that didn't appear as unresolved (None)
+                for uid in &missing_uids {
+                    cache.uids.entry(*uid).or_insert(None);
+                }
+            }
+            Err(_) => {
+                let mut cache = cache_mutex.lock().await;
+                cache.getent_disabled = true;
+            }
+        }
+    }
+
+    // Step 3: Query missing GIDs if getent is available
+    let getent_disabled = {
+        let cache = cache_mutex.lock().await;
+        cache.getent_disabled
+    };
+
+    if !getent_disabled && !missing_gids.is_empty() {
+        let gids_arg = missing_gids
+            .iter()
+            .map(|g| g.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cmd = format!("getent group {}", gids_arg);
+        match exec_ssh_batch_lookup(ssh_handle, &cmd, Duration::from_secs(2)).await {
+            Ok(output) => {
+                let mut cache = cache_mutex.lock().await;
+                for line in output.lines() {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() >= 3 {
+                        let name = parts[0].trim();
+                        if let Ok(gid) = parts[2].trim().parse::<u32>() {
+                            if !name.is_empty() {
+                                cache.gids.insert(gid, Some(name.to_string()));
+                            }
+                        }
+                    }
+                }
+                // Mark any requested GID that didn't appear as unresolved (None)
+                for gid in &missing_gids {
+                    cache.gids.entry(*gid).or_insert(None);
+                }
+            }
+            Err(_) => {
+                let mut cache = cache_mutex.lock().await;
+                cache.getent_disabled = true;
+            }
+        }
+    }
+
+    // Step 4: Populate user_name and group_name from cache
+    let cache = cache_mutex.lock().await;
+    apply_cached_identities_to_entries(&cache, entries);
+}
+
+/// Applies cached username and group name mappings to a slice of directory entries in memory.
+pub fn apply_cached_identities_to_entries(cache: &RemoteIdentityCache, entries: &mut [FileEntry]) {
+    for entry in entries.iter_mut() {
+        if let Some(ref mut own) = entry.metadata.ownership {
+            if own.user_name.is_none() {
+                if let Some(uid) = own.uid {
+                    if let Some(Some(name)) = cache.uids.get(&uid) {
+                        own.user_name = Some(name.clone());
+                    }
+                }
+            }
+            if own.group_name.is_none() {
+                if let Some(gid) = own.gid {
+                    if let Some(Some(name)) = cache.gids.get(&gid) {
+                        own.group_name = Some(name.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Optional, controlled `getent` lookup to resolve numeric UID/GID to names.
 /// Returns `None` for any name that cannot be resolved without fabricating values.
 pub async fn resolve_remote_identity_via_getent(
@@ -2123,7 +2314,8 @@ mod tests {
         profile.port = test_port;
         profile.connection_settings.timeout_seconds = 5;
         profile.sudo_sftp.enabled = true;
-        profile.sudo_sftp.sftp_server_path = Some("/usr/lib/openssh/sftp-server".to_string());
+        profile.sudo_sftp.sftp_server_path =
+            Some("/usr/lib/openssh/sftp-server-unconfigured".to_string());
 
         let result = establish_sftp_connection(&profile, None).await;
         let outcome = match result {
@@ -2179,5 +2371,84 @@ mod tests {
         let db = Database::open_default().expect("Should open DB");
         let kh_repo = KnownHostsRepository::new(&db);
         let _ = kh_repo.delete_known_host(test_host, test_port);
+    }
+
+    #[test]
+    fn test_apply_cached_identities_to_entries() {
+        let mut cache = RemoteIdentityCache::default();
+        cache.uids.insert(1000, Some("ubuntu".to_string()));
+        cache.uids.insert(0, Some("root".to_string()));
+        cache.gids.insert(1000, Some("ubuntu".to_string()));
+        cache.gids.insert(0, Some("root".to_string()));
+
+        let mut entries = vec![
+            FileEntry::new(
+                "app.log".to_string(),
+                "/home/ubuntu/app.log".to_string(),
+                FileType::Regular,
+                FileMetadata {
+                    size: Some(1024),
+                    modified_at_secs: None,
+                    accessed_at_secs: None,
+                    permissions: None,
+                    ownership: Some(FileOwnership {
+                        uid: Some(1000),
+                        gid: Some(1000),
+                        user_name: None,
+                        group_name: None,
+                    }),
+                },
+            ),
+            FileEntry::new(
+                "system.conf".to_string(),
+                "/etc/system.conf".to_string(),
+                FileType::Regular,
+                FileMetadata {
+                    size: Some(256),
+                    modified_at_secs: None,
+                    accessed_at_secs: None,
+                    permissions: None,
+                    ownership: Some(FileOwnership {
+                        uid: Some(0),
+                        gid: Some(0),
+                        user_name: None,
+                        group_name: None,
+                    }),
+                },
+            ),
+            FileEntry::new(
+                "orphan.bin".to_string(),
+                "/tmp/orphan.bin".to_string(),
+                FileType::Regular,
+                FileMetadata {
+                    size: Some(10),
+                    modified_at_secs: None,
+                    accessed_at_secs: None,
+                    permissions: None,
+                    ownership: Some(FileOwnership {
+                        uid: Some(9999),
+                        gid: Some(9999),
+                        user_name: None,
+                        group_name: None,
+                    }),
+                },
+            ),
+        ];
+
+        apply_cached_identities_to_entries(&cache, &mut entries);
+
+        let own0 = entries[0].metadata.ownership.as_ref().unwrap();
+        assert_eq!(own0.user_name.as_deref(), Some("ubuntu"));
+        assert_eq!(own0.group_name.as_deref(), Some("ubuntu"));
+
+        let own1 = entries[1].metadata.ownership.as_ref().unwrap();
+        assert_eq!(own1.user_name.as_deref(), Some("root"));
+        assert_eq!(own1.group_name.as_deref(), Some("root"));
+
+        let own2 = entries[2].metadata.ownership.as_ref().unwrap();
+        assert_eq!(own2.user_name, None);
+        assert_eq!(own2.group_name, None);
+        assert_eq!(own2.uid, Some(9999));
+        assert_eq!(own2.gid, Some(9999));
     }
 }

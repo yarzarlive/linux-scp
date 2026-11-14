@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Server,
   Plus,
@@ -14,6 +14,8 @@ import {
   X,
   Search,
   Terminal,
+  Play,
+  Edit3,
 } from "lucide-react";
 import {
   AuthMethod,
@@ -48,8 +50,20 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [profileToDelete, setProfileToDelete] = useState<
+    ConnectionProfileSummary | ConnectionProfile | null
+  >(null);
   const [showPassword, setShowPassword] = useState(false);
   const [keyringAvailable, setKeyringAvailable] = useState<boolean>(true);
+
+  // Context menu state for connection items in sidebar
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    profile: ConnectionProfileSummary;
+  } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   // Form state for currently edited profile
   const [formProfile, setFormProfile] = useState<ConnectionProfile | null>(null);
@@ -192,14 +206,88 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
     }
   };
 
+  // Dismiss context menu on click outside or Escape
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setContextMenu(null);
+      }
+    };
+
+    window.addEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [contextMenu]);
+
+  // Handle direct connection (on double-click or context menu "Connect")
+  const handleDirectConnect = async (profileId: string) => {
+    setIsLoading(true);
+    setErrorMessage(null);
+    try {
+      const profile =
+        formProfile && formProfile.id === profileId
+          ? formProfile
+          : await IpcClient.getConnectionProfile(profileId);
+      if (onSelectAndConnect) {
+        onSelectAndConnect(profile);
+      } else {
+        await IpcClient.connectSftpSession(profile.id);
+      }
+      onClose();
+    } catch (err: unknown) {
+      setErrorMessage(
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Failed to connect to profile"
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Open context menu on right click on a connection
+  const handleContextMenu = (e: React.MouseEvent, p: ConnectionProfileSummary) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (selectedId !== p.id) {
+      handleSelectProfile(p.id);
+    }
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      profile: p,
+    });
+  };
+
+  // Prompt delete confirmation
+  const handlePromptDelete = (profile?: ConnectionProfileSummary | ConnectionProfile) => {
+    const target = profile || formProfile;
+    if (!target) return;
+    setProfileToDelete(target);
+    setDeleteConfirmOpen(true);
+  };
+
   // Handle delete confirmation
   const handleDeleteConfirm = async () => {
-    if (!selectedId) return;
+    const targetId = profileToDelete?.id || selectedId;
+    if (!targetId) return;
     setIsSaving(true);
     setErrorMessage(null);
     try {
-      await IpcClient.deleteConnectionProfile(selectedId);
+      await IpcClient.deleteConnectionProfile(targetId);
       setDeleteConfirmOpen(false);
+      setProfileToDelete(null);
       await loadProfiles();
     } catch (err: unknown) {
       setErrorMessage(
@@ -393,7 +481,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setDeleteConfirmOpen(true)}
+                  onClick={() => handlePromptDelete()}
                   disabled={!selectedId || !formProfile}
                   className="flex items-center justify-center p-1 rounded border border-rose-900/60 hover:bg-rose-950/40 text-rose-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Delete selected profile"
@@ -426,7 +514,13 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                   return (
                     <div
                       key={p.id}
+                      data-testid={`profile-item-${p.id}`}
                       onClick={() => handleSelectProfile(p.id)}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        handleDirectConnect(p.id);
+                      }}
+                      onContextMenu={(e) => handleContextMenu(e, p)}
                       className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${
                         isSelected
                           ? "bg-commander-selected text-white font-medium"
@@ -501,6 +595,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                     <div>
                       <label className="block text-commander-subtext mb-1">Profile Name</label>
                       <input
+                        ref={nameInputRef}
                         type="text"
                         value={formProfile.name}
                         onChange={(e) => setFormProfile({ ...formProfile, name: e.target.value })}
@@ -999,17 +1094,82 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
         </div>
       </div>
 
+      {/* Context Menu for Connection Items */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          style={{
+            top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 120)),
+            left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 170)),
+          }}
+          className="fixed z-[60] min-w-[150px] py-1 bg-commander-surface border border-commander-border rounded shadow-2xl text-xs text-commander-text select-none animate-in fade-in-50 duration-75"
+          role="menu"
+          aria-label="Connection Context Menu"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const target = contextMenu.profile;
+              setContextMenu(null);
+              handleDirectConnect(target.id);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors text-emerald-400 hover:text-emerald-300"
+            role="menuitem"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span className="font-medium">Connect</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const target = contextMenu.profile;
+              setContextMenu(null);
+              handleSelectProfile(target.id);
+              setTimeout(() => {
+                nameInputRef.current?.focus();
+                nameInputRef.current?.select();
+              }, 50);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-left transition-colors text-sky-400 hover:text-sky-300"
+            role="menuitem"
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            <span>Edit</span>
+          </button>
+
+          <div className="my-1 border-t border-commander-border/60" />
+
+          <button
+            type="button"
+            onClick={() => {
+              const target = contextMenu.profile;
+              setContextMenu(null);
+              handlePromptDelete(target);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-950/40 text-left transition-colors text-rose-400 hover:text-rose-300"
+            role="menuitem"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+
       {/* Delete Confirmation Modal */}
       <ConfirmDialog
         isOpen={deleteConfirmOpen}
         title="Delete Connection Profile"
-        description={`Are you sure you want to permanently delete profile "${formProfile?.name || ""}" and its stored keyring secret?`}
-        items={formProfile ? [formProfile.name] : []}
+        description={`Are you sure you want to permanently delete profile "${profileToDelete?.name || formProfile?.name || ""}" and its stored keyring secret?`}
+        items={profileToDelete ? [profileToDelete.name] : formProfile ? [formProfile.name] : []}
         confirmLabel="Delete Profile"
         isDestructive={true}
         isLoading={isSaving}
         onConfirm={handleDeleteConfirm}
-        onCancel={() => setDeleteConfirmOpen(false)}
+        onCancel={() => {
+          setDeleteConfirmOpen(false);
+          setProfileToDelete(null);
+        }}
       />
     </div>
   );

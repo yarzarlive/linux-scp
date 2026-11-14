@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
-import { FolderSync, Terminal, SlidersHorizontal, Server } from "lucide-react";
+import { FolderSync, Terminal, SlidersHorizontal, Server, Sun, Moon, Check } from "lucide-react";
 
 interface HeaderProps {
   appName: string;
   appVersion: string;
   canOpenTerminal?: boolean;
+  isDarkMode?: boolean;
+  onToggleTheme?: () => void;
   onOpenSiteManager?: () => void;
   onOpenTerminal?: () => void;
   onOpenTerminalSettings?: () => void;
@@ -14,6 +16,8 @@ export const Header: React.FC<HeaderProps> = ({
   appName,
   appVersion,
   canOpenTerminal = false,
+  isDarkMode = true,
+  onToggleTheme,
   onOpenSiteManager,
   onOpenTerminal,
   onOpenTerminalSettings,
@@ -123,6 +127,50 @@ export const Header: React.FC<HeaderProps> = ({
               aria-label="Options menu"
               className="absolute left-0 top-5 w-52 rounded border border-commander-border bg-commander-surface shadow-xl py-1 z-40"
             >
+              <div className="px-3 py-1 text-[10px] font-semibold text-commander-subtext uppercase tracking-wider">
+                Appearance
+              </div>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  if (!isDarkMode) onToggleTheme?.();
+                }}
+                className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-commander-text hover:bg-commander-selected transition-colors ${
+                  isDarkMode ? "font-semibold text-commander-accent" : ""
+                }`}
+                title="Switch to Dark Mode"
+              >
+                <div className="flex items-center gap-2">
+                  <Moon className="w-3.5 h-3.5 text-commander-accent" />
+                  <span>Dark Mode</span>
+                </div>
+                {isDarkMode && <Check className="w-3.5 h-3.5 text-commander-accent" />}
+              </button>
+
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  if (isDarkMode) onToggleTheme?.();
+                }}
+                className={`w-full flex items-center justify-between px-3 py-1.5 text-left text-commander-text hover:bg-commander-selected transition-colors ${
+                  !isDarkMode ? "font-semibold text-commander-accent" : ""
+                }`}
+                title="Switch to Light Mode"
+              >
+                <div className="flex items-center gap-2">
+                  <Sun className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Light Mode</span>
+                </div>
+                {!isDarkMode && <Check className="w-3.5 h-3.5 text-commander-accent" />}
+              </button>
+
+              <div className="my-1 border-t border-commander-border/60" />
+
               <button
                 type="button"
                 role="menuitem"

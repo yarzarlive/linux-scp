@@ -58,6 +58,20 @@ export class IpcClient {
   }
 
   /**
+   * Retrieves saved theme preference ("dark" or "light").
+   */
+  static async getThemePreference(): Promise<"dark" | "light"> {
+    return this.invokeCommand<"dark" | "light">("get_theme_preference");
+  }
+
+  /**
+   * Persists saved theme preference ("dark" or "light").
+   */
+  static async setThemePreference(theme: "dark" | "light"): Promise<void> {
+    return this.invokeCommand<void>("set_theme_preference", { theme });
+  }
+
+  /**
    * Lists authentic contents of a local directory via Rust POSIX backend.
    */
   static async listLocalDirectory(
@@ -114,6 +128,20 @@ export class IpcClient {
     return this.invokeCommand<string[]>("delete_local_entries", {
       paths,
     });
+  }
+
+  /**
+   * Retrieves saved directory paths (bookmarks) for a scope/pane (e.g. "local" or "remote:<siteId>").
+   */
+  static async getSavedPaths(paneType: string): Promise<string[]> {
+    return this.invokeCommand<string[]>("get_saved_paths", { paneType });
+  }
+
+  /**
+   * Persists saved directory paths (bookmarks) for a scope/pane (e.g. "local" or "remote:<siteId>").
+   */
+  static async saveSavedPaths(paneType: string, paths: string[]): Promise<void> {
+    return this.invokeCommand<void>("save_saved_paths", { paneType, paths });
   }
 
   /**
@@ -431,11 +459,16 @@ export class IpcClient {
   }
 
   /**
-   * Launches an external interactive SSH terminal session for the selected connection profile.
+   * Launches an external interactive SSH terminal session for the selected connection profile,
+   * optionally opening directly in the specified remote directory.
    */
-  static async launchSshTerminal(profileId: string): Promise<TerminalLaunchResult> {
+  static async launchSshTerminal(
+    profileId: string,
+    remoteDirectory?: string
+  ): Promise<TerminalLaunchResult> {
     return this.invokeCommand<TerminalLaunchResult>("launch_ssh_terminal", {
       profileId,
+      remoteDirectory,
     });
   }
 

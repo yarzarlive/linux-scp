@@ -2,8 +2,85 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+html,
+body,
+[data-theme="dark"],
+.dark {
   color-scheme: dark;
+  --commander-dark: 30 30 46;      /* #1e1e2e */
+  --commander-darker: 24 24 37;    /* #181825 */
+  --commander-accent: 137 180 250; /* #89b4fa */
+  --commander-border: 49 50 68;    /* #313244 */
+  --commander-surface: 17 17 27;   /* #11111b */
+  --commander-selected: 69 71 90;  /* #45475a */
+  --commander-text: 205 214 244;   /* #cdd6f4 */
+  --commander-subtext: 166 173 200;/* #a6adc8 */
+}
+
+html.light,
+html[data-theme="light"],
+body.light,
+body[data-theme="light"],
+[data-theme="light"],
+.light {
+  color-scheme: light !important;
+  --commander-dark: 255 255 255 !important;    /* #ffffff - clean white for inputs, buttons, cards */
+  --commander-darker: 226 234 240 !important;  /* #e2eaf0 (226, 234, 240) - toolbars, headers, column headers */
+  --commander-surface: 240 243 248 !important; /* #f0f3f8 (240, 243, 248) - main canvas, panes, table backgrounds */
+  --commander-border: 143 168 195 !important;  /* #8fa8c3 (143, 168, 195) - high-contrast steel-slate border */
+  --commander-selected: 39 83 229 !important;  /* #2753e5 (39, 83, 229) - vibrant blue row selection & accents */
+  --commander-accent: 39 83 229 !important;    /* #2753e5 (39, 83, 229) - vibrant blue accent */
+  --commander-text: 1 5 13 !important;         /* #01050d (1, 5, 13) - deep dark text for high contrast */
+  --commander-subtext: 68 82 102 !important;   /* #445266 (68, 82, 102) - crisp readable secondary text */
+}
+
+/* Light mode explicit element styling overrides to ensure instantaneous, reliable theme switching */
+html.light body,
+body.light {
+  background-color: rgb(240 243 248) !important;
+  color: rgb(1 5 13) !important;
+}
+
+html.light .bg-commander-dark,
+[data-theme="light"] .bg-commander-dark {
+  background-color: rgb(255 255 255) !important;
+}
+
+html.light .bg-commander-darker,
+[data-theme="light"] .bg-commander-darker {
+  background-color: rgb(226 234 240) !important;
+}
+
+html.light .bg-commander-surface,
+[data-theme="light"] .bg-commander-surface {
+  background-color: rgb(240 243 248) !important;
+}
+
+html.light .text-commander-text,
+[data-theme="light"] .text-commander-text {
+  color: rgb(1 5 13) !important;
+}
+
+html.light .text-commander-subtext,
+[data-theme="light"] .text-commander-subtext {
+  color: rgb(68 82 102) !important;
+}
+
+html.light .border-commander-border,
+[data-theme="light"] .border-commander-border {
+  border-color: rgb(143 168 195) !important;
+}
+
+/* Ensure hover contrast in light mode */
+html.light .hover\:bg-commander-dark:hover,
+[data-theme="light"] .hover\:bg-commander-dark:hover {
+  color: rgb(1 5 13) !important;
+}
+
+html.light .hover\:bg-commander-selected:hover,
+[data-theme="light"] .hover\:bg-commander-selected:hover {
+  color: rgb(255 255 255) !important;
 }
 
 body {

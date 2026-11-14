@@ -43,6 +43,61 @@ export function App() {
     message: string;
   } | null>(null);
 
+  // Theme state ("dark" | "light")
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const stored = window.localStorage.getItem("linuxscp:theme");
+        if (stored === "light" || stored === "dark") return stored;
+      } catch {
+        // ignore
+      }
+    }
+    return "dark";
+  });
+
+  // Sync theme changes to document and persistence
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-theme", theme);
+      document.body.setAttribute("data-theme", theme);
+      if (theme === "light") {
+        document.documentElement.classList.remove("dark");
+        document.documentElement.classList.add("light");
+        document.body.classList.remove("dark");
+        document.body.classList.add("light");
+      } else {
+        document.documentElement.classList.remove("light");
+        document.documentElement.classList.add("dark");
+        document.body.classList.remove("light");
+        document.body.classList.add("dark");
+      }
+    }
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        window.localStorage.setItem("linuxscp:theme", theme);
+      } catch {
+        // ignore
+      }
+    }
+    IpcClient.setThemePreference(theme).catch(() => {});
+  }, [theme]);
+
+  // Load theme preference on mount from backend
+  useEffect(() => {
+    IpcClient.getThemePreference()
+      .then((savedTheme) => {
+        if (savedTheme === "light" || savedTheme === "dark") {
+          setTheme(savedTheme);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  };
+
   // Pane width split percentage (default 50%)
   const [leftPanePercent, setLeftPanePercent] = useState<number>(50);
 
@@ -436,7 +491,11 @@ export function App() {
 
       setTerminalFeedback(null);
       try {
-        const result = await IpcClient.launchSshTerminal(targetId);
+        const effectiveRemoteDir =
+          !overrideProfileId && (remoteCurrentPath || sessionState.session?.current_remote_path)
+            ? remoteCurrentPath || sessionState.session?.current_remote_path
+            : undefined;
+        const result = await IpcClient.launchSshTerminal(targetId, effectiveRemoteDir);
         setTerminalFeedback({
           kind: "spawned",
           message: result.message,
@@ -452,7 +511,7 @@ export function App() {
         });
       }
     },
-    [effectiveTerminalProfileId]
+    [effectiveTerminalProfileId, remoteCurrentPath, sessionState.session?.current_remote_path]
   );
 
   const handleUpload = useCallback(
@@ -607,13 +666,16 @@ export function App() {
         e.preventDefault();
         setActiveDrag(null);
       }}
-      className="flex flex-col h-screen w-screen bg-commander-dark text-commander-text font-sans overflow-hidden"
+      data-theme={theme}
+      className={`flex flex-col h-screen w-screen ${theme === "light" ? "bg-commander-surface" : "bg-commander-dark"} text-commander-text font-sans overflow-hidden ${theme}`}
     >
       {/* 1. Main Menu Area */}
       <Header
         appName="LinuxSCP"
         appVersion={systemInfo?.app_version ?? "0.1.0"}
         canOpenTerminal={canOpenTerminal}
+        isDarkMode={theme === "dark"}
+        onToggleTheme={handleToggleTheme}
         onOpenSiteManager={() => setSiteManagerOpen(true)}
         onOpenTerminal={() => handleOpenTerminal()}
         onOpenTerminalSettings={() => setTerminalSettingsOpen(true)}
@@ -627,7 +689,6 @@ export function App() {
         canOpenTerminal={canOpenTerminal}
         activeSession={sessionState.session}
         hostKeyVerified={true}
-        onNewSession={() => setSiteManagerOpen(true)}
         onSiteManager={() => setSiteManagerOpen(true)}
         onDisconnect={handleDisconnect}
         onReconnect={canReconnect ? handleReconnect : undefined}

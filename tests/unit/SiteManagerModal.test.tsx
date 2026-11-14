@@ -202,7 +202,146 @@ describe("SiteManagerModal Component", () => {
 
     // Check guidance text and sudoers rule
     expect(screen.getByText(/Server-side sudoers configuration required:/i)).toBeInTheDocument();
-    expect(screen.getByText(/deploy ALL=\(root\) NOPASSWD: \/usr\/lib\/openssh\/sftp-server/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/deploy ALL=\(root\) NOPASSWD: \/usr\/lib\/openssh\/sftp-server/i)
+    ).toBeInTheDocument();
     expect(screen.getByText(/Never configure unrestricted/i)).toBeInTheDocument();
+  });
+
+  it("connects to profile and closes modal on double click", async () => {
+    const onSelectAndConnect = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <SiteManagerModal isOpen={true} onClose={onClose} onSelectAndConnect={onSelectAndConnect} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Production Web")).toBeInTheDocument();
+    });
+
+    const profileItem = screen.getByTestId("profile-item-profile-1");
+    fireEvent.doubleClick(profileItem);
+
+    await waitFor(() => {
+      expect(onSelectAndConnect).toHaveBeenCalledWith(mockFullProfile1);
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  it("opens context menu with Connect, Edit, and Delete on right click", async () => {
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Production Web")).toBeInTheDocument();
+    });
+
+    const profileItem = screen.getByTestId("profile-item-profile-1");
+    fireEvent.contextMenu(profileItem, { clientX: 100, clientY: 150 });
+
+    const menu = screen.getByRole("menu", { name: "Connection Context Menu" });
+    expect(menu).toBeInTheDocument();
+
+    expect(screen.getByRole("menuitem", { name: /Connect/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Edit/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Delete/i })).toBeInTheDocument();
+  });
+
+  it("triggers connection from context menu Connect option", async () => {
+    const onSelectAndConnect = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <SiteManagerModal isOpen={true} onClose={onClose} onSelectAndConnect={onSelectAndConnect} />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Production Web")).toBeInTheDocument();
+    });
+
+    const profileItem = screen.getByTestId("profile-item-profile-1");
+    fireEvent.contextMenu(profileItem, { clientX: 100, clientY: 150 });
+
+    const connectOption = screen.getByRole("menuitem", { name: /Connect/i });
+    fireEvent.click(connectOption);
+
+    await waitFor(() => {
+      expect(onSelectAndConnect).toHaveBeenCalledWith(mockFullProfile1);
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  it("selects profile and focuses name input from context menu Edit option", async () => {
+    const mockFullProfile2: ConnectionProfile = {
+      id: "profile-2",
+      name: "Backup SCP",
+      protocol: "SCP",
+      host: "10.0.0.5",
+      port: 22,
+      username: "backup",
+      auth_method: { type: "Password" },
+      sudo_sftp: { enabled: false },
+      transfer_settings: {
+        preserve_timestamps: true,
+        preserve_permissions: true,
+        concurrency_limit: 2,
+      },
+      connection_settings: {
+        timeout_seconds: 30,
+        keepalive_interval_seconds: 15,
+      },
+      created_at_ms: 1700001000,
+      updated_at_ms: 1700001000,
+    };
+
+    vi.spyOn(IpcClient, "getConnectionProfile").mockImplementation(async (id: string) => {
+      if (id === "profile-2") return mockFullProfile2;
+      return mockFullProfile1;
+    });
+
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Backup SCP")).toBeInTheDocument();
+    });
+
+    const profile2Item = screen.getByTestId("profile-item-profile-2");
+    fireEvent.contextMenu(profile2Item, { clientX: 120, clientY: 180 });
+
+    const editOption = screen.getByRole("menuitem", { name: /Edit/i });
+    fireEvent.click(editOption);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Backup SCP")).toBeInTheDocument();
+    });
+  });
+
+  it("opens delete confirmation and deletes targeted profile from context menu Delete option", async () => {
+    const deleteSpy = vi.spyOn(IpcClient, "deleteConnectionProfile").mockResolvedValue();
+
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Production Web")).toBeInTheDocument();
+    });
+
+    const profileItem = screen.getByTestId("profile-item-profile-1");
+    fireEvent.contextMenu(profileItem, { clientX: 100, clientY: 150 });
+
+    const deleteOption = screen.getByRole("menuitem", { name: /Delete/i });
+    fireEvent.click(deleteOption);
+
+    // Verify confirmation dialog opens for profile-1
+    expect(screen.getByText("Delete Connection Profile")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Are you sure you want to permanently delete profile "Production Web"/i)
+    ).toBeInTheDocument();
+
+    const confirmBtn = screen.getByRole("button", { name: "Delete Profile" });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(deleteSpy).toHaveBeenCalledWith("profile-1");
+    });
   });
 });

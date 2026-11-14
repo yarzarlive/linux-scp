@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: "class",
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -8,14 +9,14 @@ export default {
     extend: {
       colors: {
         commander: {
-          dark: "#1e1e2e",
-          darker: "#181825",
-          accent: "#89b4fa",
-          border: "#313244",
-          surface: "#11111b",
-          selected: "#45475a",
-          text: "#cdd6f4",
-          subtext: "#a6adc8",
+          dark: "rgb(var(--commander-dark) / <alpha-value>)",
+          darker: "rgb(var(--commander-darker) / <alpha-value>)",
+          accent: "rgb(var(--commander-accent) / <alpha-value>)",
+          border: "rgb(var(--commander-border) / <alpha-value>)",
+          surface: "rgb(var(--commander-surface) / <alpha-value>)",
+          selected: "rgb(var(--commander-selected) / <alpha-value>)",
+          text: "rgb(var(--commander-text) / <alpha-value>)",
+          subtext: "rgb(var(--commander-subtext) / <alpha-value>)",
         },
       },
     },

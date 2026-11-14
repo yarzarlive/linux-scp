@@ -646,39 +646,30 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
               <span>SCP (TRANSFER-ONLY)</span>
             </span>
           )}
-          {activeSession?.elevation.type === "ElevatedSudo" && (
-            <span
-              className="ml-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/50 text-[10px] font-bold tracking-wider uppercase shrink-0 flex items-center gap-1 shadow-sm"
-              title={`Running elevated SFTP session via: ${activeSession.elevation.executed_command}`}
-            >
-              <ShieldAlert className="w-3 h-3 text-amber-400 shrink-0" />
-              <span>ELEVATED / ROOT ({activeSession.elevation.effective_user})</span>
-            </span>
-          )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1 shrink-0">
           {isConnected && activeSession ? (
             <>
               {canCreateDir && (
                 <button
                   type="button"
                   onClick={handleOpenCreateDir}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors text-[11px]"
+                  className="p-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors"
                   title="New Remote Folder (F7)"
+                  aria-label="New Remote Folder (F7)"
                 >
-                  <FolderPlus className="w-3 h-3 text-amber-400" />
-                  <span>New Folder</span>
+                  <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
                 </button>
               )}
               {canCreateFile && (
                 <button
                   type="button"
                   onClick={handleOpenCreateFile}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors text-[11px]"
+                  className="p-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors"
                   title="New Remote File"
+                  aria-label="New Remote File"
                 >
-                  <FilePlus className="w-3 h-3 text-commander-accent" />
-                  <span>New File</span>
+                  <FilePlus className="w-3.5 h-3.5 text-commander-accent" />
                 </button>
               )}
               {canRename && (
@@ -686,15 +677,15 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
                   type="button"
                   onClick={handleOpenRename}
                   disabled={selectedPaths.size !== 1}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                  className={`p-1 rounded border transition-colors ${
                     selectedPaths.size === 1
                       ? "bg-commander-dark hover:bg-commander-selected border-commander-border text-commander-text hover:text-white cursor-pointer"
                       : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
                   }`}
                   title="Rename Selected Remote Item (F2)"
+                  aria-label="Rename Selected Remote Item (F2)"
                 >
-                  <Edit3 className="w-3 h-3 text-sky-400" />
-                  <span>Rename</span>
+                  <Edit3 className="w-3.5 h-3.5 text-sky-400" />
                 </button>
               )}
               {(canDeleteFiles || canDeleteDirs) && (
@@ -702,15 +693,15 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
                   type="button"
                   onClick={handleOpenDelete}
                   disabled={!canDeleteSelected}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                  className={`p-1 rounded border transition-colors ${
                     canDeleteSelected
                       ? "bg-rose-950/40 hover:bg-rose-900/60 border-rose-900/60 text-rose-300 cursor-pointer"
                       : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
                   }`}
                   title="Delete Selected Remote Items (Del)"
+                  aria-label="Delete Selected Remote Items (Del)"
                 >
-                  <Trash2 className="w-3 h-3 text-rose-400" />
-                  <span>Delete</span>
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                 </button>
               )}
               {(canSetPermissions || canSetOwnership) && (
@@ -718,15 +709,15 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
                   type="button"
                   onClick={() => setPropertiesOpen(true)}
                   disabled={!canOpenProperties}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                  className={`p-1 rounded border transition-colors ${
                     canOpenProperties
                       ? "bg-commander-dark hover:bg-commander-selected border-commander-border text-commander-text hover:text-white cursor-pointer"
                       : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
                   }`}
                   title="Remote File Properties & Permissions"
+                  aria-label="Remote File Properties & Permissions"
                 >
-                  <SlidersHorizontal className="w-3 h-3 text-amber-400" />
-                  <span>Properties</span>
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
                 </button>
               )}
               {onDownload && caps?.can_download && (
@@ -734,15 +725,15 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
                   type="button"
                   onClick={() => onDownload(Array.from(selectedPaths))}
                   disabled={selectedPaths.size === 0}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] transition-colors ${
+                  className={`p-1 rounded border transition-colors ${
                     selectedPaths.size > 0
                       ? "bg-emerald-950/60 hover:bg-emerald-900/70 border-emerald-700/60 text-emerald-200 cursor-pointer"
                       : "bg-commander-dark/40 border-commander-border/40 text-commander-subtext/30 cursor-not-allowed"
                   }`}
                   title="Download Selected to Local Pane"
+                  aria-label="Download Selected to Local Pane"
                 >
-                  <Download className="w-3 h-3 text-emerald-400" />
-                  <span>Download</span>
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
                 </button>
               )}
               <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-800/50">
@@ -753,22 +744,22 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
                 <button
                   type="button"
                   onClick={onReconnect}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text text-[11px] transition-colors"
+                  className="p-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-commander-text hover:text-white transition-colors"
                   title="Reconnect SFTP Session"
+                  aria-label="Reconnect SFTP Session"
                 >
-                  <RefreshCw className="w-3 h-3 text-commander-accent" />
-                  <span>Reconnect</span>
+                  <RefreshCw className="w-3.5 h-3.5 text-commander-accent" />
                 </button>
               )}
               {onDisconnect && (
                 <button
                   type="button"
                   onClick={onDisconnect}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/40 hover:bg-rose-950/70 border border-rose-800/60 text-rose-300 text-[11px] transition-colors"
+                  className="p-1 rounded bg-rose-950/40 hover:bg-rose-950/70 border border-rose-800/60 text-rose-300 transition-colors"
                   title="Disconnect SFTP Session"
+                  aria-label="Disconnect SFTP Session"
                 >
-                  <Unplug className="w-3 h-3" />
-                  <span>Disconnect</span>
+                  <Unplug className="w-3.5 h-3.5" />
                 </button>
               )}
             </>
@@ -794,6 +785,13 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       {/* Address & Navigation Bar */}
       <AddressBar
         path={displayedPath}
+        paneType="remote"
+        siteId={
+          activeSession
+            ? (activeSession.profile_id ??
+              `${activeSession.username}@${activeSession.host}:${activeSession.port}`)
+            : undefined
+        }
         onNavigate={handleNavigate}
         onBack={handleBack}
         canGoBack={
