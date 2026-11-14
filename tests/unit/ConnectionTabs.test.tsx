@@ -1,11 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { RemoteTabBar } from "../../src/components/FilePanel/RemoteTabBar";
+import { LocalPane } from "../../src/components/FilePanel/LocalPane";
 import { RemotePane } from "../../src/components/FilePanel/RemotePane";
 import { RemoteTabState, createDefaultTabState } from "../../src/types/tabs";
 import { FileEntry } from "../../src/types/filesystem";
 
 vi.mock("../../src/services/ipc", () => ({
   IpcClient: {
+    listLocalDirectory: vi.fn().mockImplementation((path: string) =>
+      Promise.resolve({
+        current_path: path || "/home/ubuntu",
+        parent_path: "/home",
+        entries: [],
+      })
+    ),
+    getHomeDirectory: vi.fn().mockResolvedValue("/home/ubuntu"),
     listRemoteDirectory: vi.fn(),
     checkRemotePathIsDir: vi.fn(),
     createRemoteDirectory: vi.fn(),
@@ -77,9 +87,17 @@ const mockEntry2: FileEntry = {
   },
 };
 
-function createConnectedTab(id: string, title: string, sessionId: string, currentPath: string, entries: FileEntry[]): RemoteTabState {
-  const tab = createDefaultTabState(id, title);
+function createConnectedTab(
+  id: string,
+  title: string,
+  sessionId: string,
+  currentPath: string,
+  entries: FileEntry[],
+  localPath = "/home/ubuntu"
+): RemoteTabState {
+  const tab = createDefaultTabState(id, title, localPath);
   tab.currentPath = currentPath;
+  tab.localPath = localPath;
   tab.parentPath = "/";
   tab.homePath = "/home/ubuntu";
   tab.entries = entries;
@@ -138,12 +156,21 @@ describe("Connection Tabs Integration", () => {
     const onUpdateTab = vi.fn();
 
     const { rerender } = render(
-      <RemotePane
-        tabs={[tab1, tab2]}
-        activeTabId="tab-1"
-        onSelectTab={onSelectTab}
-        onUpdateTab={onUpdateTab}
-      />
+      <div>
+        <RemoteTabBar
+          tabs={[tab1, tab2]}
+          activeTabId="tab-1"
+          onSelectTab={onSelectTab}
+          onCloseTab={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+        <RemotePane
+          tabs={[tab1, tab2]}
+          activeTabId="tab-1"
+          onSelectTab={onSelectTab}
+          onUpdateTab={onUpdateTab}
+        />
+      </div>
     );
 
     // Tab 1 is active: renders index.html from /var/www
@@ -157,12 +184,21 @@ describe("Connection Tabs Integration", () => {
 
     // Re-render as if state switched activeTabId to "tab-2"
     rerender(
-      <RemotePane
-        tabs={[tab1, tab2]}
-        activeTabId="tab-2"
-        onSelectTab={onSelectTab}
-        onUpdateTab={onUpdateTab}
-      />
+      <div>
+        <RemoteTabBar
+          tabs={[tab1, tab2]}
+          activeTabId="tab-2"
+          onSelectTab={onSelectTab}
+          onCloseTab={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+        <RemotePane
+          tabs={[tab1, tab2]}
+          activeTabId="tab-2"
+          onSelectTab={onSelectTab}
+          onUpdateTab={onUpdateTab}
+        />
+      </div>
     );
 
     // Tab 2 is active: renders nginx.conf from /etc/nginx
@@ -272,7 +308,7 @@ describe("Connection Tabs Integration", () => {
     const onAddTab = vi.fn();
 
     render(
-      <RemotePane
+      <RemoteTabBar
         tabs={[tab1, tab2, tab3]}
         activeTabId="tab-2"
         onSelectTab={onSelectTab}
@@ -295,5 +331,95 @@ describe("Connection Tabs Integration", () => {
     const closeBtn = screen.getByLabelText("Close tab Production Web");
     fireEvent.click(closeBtn);
     expect(onCloseTab).toHaveBeenCalledWith("tab-1");
+  });
+
+  it("retains independent memory of both local directory and remote directory per connection tab", async () => {
+    // Tab 1: local /home/ubuntu/app1, remote /var/www
+    const tab1 = createConnectedTab(
+      "tab-1",
+      "Web Server",
+      "sess-1",
+      "/var/www",
+      [mockEntry1],
+      "/home/ubuntu/app1"
+    );
+
+    // Tab 2: local /home/ubuntu/app2, remote /etc/nginx
+    const tab2 = createConnectedTab(
+      "tab-2",
+      "Config Server",
+      "sess-2",
+      "/etc/nginx",
+      [mockEntry2],
+      "/home/ubuntu/app2"
+    );
+
+    const onSelectTab = vi.fn();
+
+    // Render dual-pane with Tab 1 active
+    const { rerender } = render(
+      <div>
+        <RemoteTabBar
+          tabs={[tab1, tab2]}
+          activeTabId="tab-1"
+          onSelectTab={onSelectTab}
+          onCloseTab={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+        <LocalPane targetPath={tab1.localPath} />
+        <RemotePane tabs={[tab1, tab2]} activeTabId="tab-1" />
+      </div>
+    );
+
+    // Tab 1 displays its own local path and remote path
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("/home/ubuntu/app1")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("/var/www")).toBeInTheDocument();
+      expect(screen.getByText("index.html")).toBeInTheDocument();
+    });
+
+    // Switch to Tab 2
+    rerender(
+      <div>
+        <RemoteTabBar
+          tabs={[tab1, tab2]}
+          activeTabId="tab-2"
+          onSelectTab={onSelectTab}
+          onCloseTab={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+        <LocalPane targetPath={tab2.localPath} />
+        <RemotePane tabs={[tab1, tab2]} activeTabId="tab-2" />
+      </div>
+    );
+
+    // Tab 2 displays its own independent local path and remote path
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("/home/ubuntu/app2")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("/etc/nginx")).toBeInTheDocument();
+      expect(screen.getByText("nginx.conf")).toBeInTheDocument();
+    });
+
+    // Switch back to Tab 1
+    rerender(
+      <div>
+        <RemoteTabBar
+          tabs={[tab1, tab2]}
+          activeTabId="tab-1"
+          onSelectTab={onSelectTab}
+          onCloseTab={vi.fn()}
+          onAddTab={vi.fn()}
+        />
+        <LocalPane targetPath={tab1.localPath} />
+        <RemotePane tabs={[tab1, tab2]} activeTabId="tab-1" />
+      </div>
+    );
+
+    // Tab 1's local and remote memory are faithfully preserved
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("/home/ubuntu/app1")).toBeInTheDocument();
+      expect(screen.getByDisplayValue("/var/www")).toBeInTheDocument();
+      expect(screen.getByText("index.html")).toBeInTheDocument();
+    });
   });
 });

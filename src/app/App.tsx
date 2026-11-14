@@ -27,6 +27,7 @@ import {
 import { InternalDragPayload } from "../utils/dragDrop";
 
 import { RemoteTabState } from "../types/tabs";
+import { RemoteTabBar } from "../components/FilePanel/RemoteTabBar";
 import { createInitialRemoteNavState } from "../utils/remoteNavigation";
 
 type HostKeyChallenge = Extract<ConnectOutcome, { outcome: "HostKeyUnknown" | "HostKeyChanged" }>;
@@ -114,6 +115,7 @@ export function App() {
     {
       id: "tab-1",
       title: "Remote",
+      localPath: "",
       sessionState: {
         status: { status: "Disconnected" },
         session: null,
@@ -178,6 +180,7 @@ export function App() {
     const newTab: RemoteTabState = {
       id: newId,
       title: `Remote ${tabCounterRef.current}`,
+      localPath: localCurrentPath || "",
       sessionState: {
         status: { status: "Disconnected" },
         session: null,
@@ -197,7 +200,7 @@ export function App() {
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newId);
     setSiteManagerOpen(true);
-  }, []);
+  }, [localCurrentPath]);
 
   const handleSelectTab = useCallback((tabId: string) => {
     setActiveTabId(tabId);
@@ -228,6 +231,7 @@ export function App() {
             {
               id: `tab-${Date.now()}-${tabCounterRef.current}`,
               title: "Remote",
+              localPath: localCurrentPath || "",
               sessionState: {
                 status: { status: "Disconnected" },
                 session: null,
@@ -483,13 +487,14 @@ export function App() {
         const newTab: RemoteTabState = {
           id: newId,
           title: profile.name || profile.host,
+          localPath: profile.initial_local_directory || localCurrentPath || "",
           sessionState: {
             status: { status: "Connecting" },
             session: null,
             trusted_host_key: null,
           },
           connectionError: null,
-          currentPath: "",
+          currentPath: profile.initial_remote_directory || "",
           parentPath: null,
           homePath: null,
           entries: [],
@@ -508,6 +513,8 @@ export function App() {
         targetSessionId = undefined;
         handleUpdateTab(targetTabId, {
           title: profile.name || profile.host,
+          localPath:
+            profile.initial_local_directory || activeTab.localPath || localCurrentPath || "",
           sessionState: {
             status: { status: "Connecting" },
             session: null,
@@ -534,6 +541,8 @@ export function App() {
               session: outcome.session,
               trusted_host_key: outcome.trusted_host_key,
             },
+            currentPath: outcome.session.current_remote_path,
+            homePath: outcome.session.home_remote_path ?? null,
             connectionError: null,
             canReconnect: true,
           });
@@ -568,7 +577,7 @@ export function App() {
         });
       }
     },
-    [activeTabId, activeTab, handleUpdateTab]
+    [activeTabId, activeTab, handleUpdateTab, localCurrentPath]
   );
 
   // Reconnect active or last session
@@ -991,6 +1000,15 @@ export function App() {
 
       {/* 3. Commander Dual-Pane Working Area */}
       <main className="flex-1 flex flex-col p-1.5 gap-1.5 min-h-0 overflow-hidden">
+        {/* Full-width Connection Tabs Bar (Above both Local and Remote panes) */}
+        <RemoteTabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelectTab={handleSelectTab}
+          onCloseTab={handleCloseTab}
+          onAddTab={handleAddTab}
+        />
+
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Left: Local Filesystem Pane */}
           <div
@@ -998,7 +1016,11 @@ export function App() {
             className="h-full flex flex-col min-w-[280px]"
           >
             <LocalPane
-              onDirectoryChange={setLocalCurrentPath}
+              targetPath={activeTab.localPath}
+              onDirectoryChange={(p) => {
+                setLocalCurrentPath(p);
+                handleUpdateTab(activeTabId, { localPath: p });
+              }}
               canUpload={isConnected}
               onUpload={handleUpload}
               onDropDownload={handleDownload}

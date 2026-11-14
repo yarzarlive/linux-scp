@@ -11,6 +11,7 @@ export interface RemoteTabState {
   title: string;
   sessionState: SessionStateSnapshot;
   connectionError: string | null;
+  localPath: string;
   currentPath: string;
   parentPath: string | null;
   homePath: string | null;
@@ -23,10 +24,15 @@ export interface RemoteTabState {
   canReconnect: boolean;
 }
 
-export function createDefaultTabState(id: string, title = "Remote 1"): RemoteTabState {
+export function createDefaultTabState(
+  id: string,
+  title = "Remote 1",
+  localPath = ""
+): RemoteTabState {
   return {
     id,
     title,
+    localPath,
     sessionState: {
       status: { status: "Disconnected" },
       session: null,

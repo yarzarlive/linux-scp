@@ -21,7 +21,7 @@ export const RemoteTabBar: React.FC<RemoteTabBarProps> = ({
     <div
       role="tablist"
       aria-label="Remote Connection Tabs"
-      className="flex items-center bg-commander-darker border-b border-commander-border px-1.5 pt-1 gap-1 overflow-x-auto select-none min-h-[30px]"
+      className="flex items-center bg-commander-darker border border-commander-border rounded-t px-1.5 pt-1 gap-1 overflow-x-auto select-none min-h-[32px] shrink-0"
     >
       <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto no-scrollbar">
         {tabs.map((tab) => {
@@ -44,12 +44,12 @@ export const RemoteTabBar: React.FC<RemoteTabBarProps> = ({
                   onSelectTab(tab.id);
                 }
               }}
-              className={`group flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-t border-t border-l border-r font-medium cursor-pointer transition-colors max-w-[200px] shrink-0 ${
+              className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-t border-t border-l border-r font-medium cursor-pointer transition-colors max-w-[220px] shrink-0 ${
                 isActive
-                  ? "bg-commander-surface border-commander-border text-commander-text border-b-transparent shadow-sm"
+                  ? "bg-commander-surface border-commander-border text-commander-text border-b-transparent shadow-sm font-semibold"
                   : "bg-commander-dark/50 hover:bg-commander-dark border-transparent text-commander-subtext hover:text-commander-text"
               }`}
-              title={`${tab.title} (${statusKind})`}
+              title={`${tab.title} (${statusKind})\nRemote: ${tab.currentPath || "Not connected"}\nLocal: ${tab.localPath || "Default"}`}
             >
               {/* Tab Connection Status Indicator */}
               {isConnecting ? (
@@ -74,7 +74,7 @@ export const RemoteTabBar: React.FC<RemoteTabBarProps> = ({
                     e.stopPropagation();
                     onCloseTab(tab.id);
                   }}
-                  className="p-0.5 rounded hover:bg-rose-950/80 hover:text-rose-200 text-commander-subtext/60 group-hover:text-commander-subtext transition-colors shrink-0"
+                  className="p-0.5 rounded hover:bg-rose-950/80 hover:text-rose-200 text-commander-subtext/60 group-hover:text-commander-subtext transition-colors shrink-0 ml-1"
                   title="Close Tab"
                 >
                   <X className="w-3 h-3" />

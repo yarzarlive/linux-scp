@@ -47,6 +47,7 @@ import { RemoteTabState } from "../../types/tabs";
 import { RemoteTabBar } from "./RemoteTabBar";
 
 export interface RemotePaneProps {
+  showTabBar?: boolean;
   tabs?: RemoteTabState[];
   activeTabId?: string;
   onSelectTab?: (tabId: string) => void;
@@ -103,6 +104,7 @@ function classifyRemoteError(err: unknown, targetPath?: string): RemoteDirectory
 }
 
 export const RemotePane: React.FC<RemotePaneProps> = ({
+  showTabBar = false,
   tabs,
   activeTabId,
   onSelectTab,
@@ -780,8 +782,8 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
               : "border-commander-border"
       }`}
     >
-      {/* 0. Multiple Connection Tabs Bar */}
-      {isExternalTabs && tabs && tabs.length > 0 && (
+      {/* 0. Multiple Connection Tabs Bar (if requested inside pane) */}
+      {showTabBar && isExternalTabs && tabs && tabs.length > 0 && (
         <RemoteTabBar
           tabs={tabs}
           activeTabId={activeTabId!}

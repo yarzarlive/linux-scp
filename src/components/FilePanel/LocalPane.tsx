@@ -16,6 +16,7 @@ import { usePaneDragDrop } from "../../hooks/usePaneDragDrop";
 
 interface LocalPaneProps {
   initialPath?: string;
+  targetPath?: string;
   onDirectoryChange?: (path: string) => void;
   canUpload?: boolean;
   onUpload?: (paths: string[], targetRemoteDir?: string) => void;
@@ -30,6 +31,7 @@ interface LocalPaneProps {
 
 export const LocalPane: React.FC<LocalPaneProps> = ({
   initialPath,
+  targetPath,
   onDirectoryChange,
   canUpload = false,
   onUpload,
@@ -41,7 +43,7 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
   onFocusPane,
   refreshTrigger = 0,
 }) => {
-  const [currentPath, setCurrentPath] = useState<string>(initialPath || "");
+  const [currentPath, setCurrentPath] = useState<string>(targetPath || initialPath || "");
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [history, setHistory] = useState<string[]>([]);
@@ -106,11 +108,12 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
     [showHidden, historyIndex, onDirectoryChange]
   );
 
-  // Initialize with home directory or initial path
+  // Initialize with home directory or initial path / target path
   useEffect(() => {
     async function init() {
-      if (initialPath) {
-        await loadDirectory(initialPath, true);
+      const startPath = targetPath || initialPath;
+      if (startPath) {
+        await loadDirectory(startPath, true);
       } else {
         try {
           const home = await IpcClient.getHomeDirectory();
@@ -123,6 +126,14 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Update directory when targetPath changes (e.g. on connection tab switch)
+  useEffect(() => {
+    if (targetPath && targetPath !== currentPath) {
+      loadDirectory(targetPath, false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetPath]);
 
   // Reload when showHidden changes
   useEffect(() => {
