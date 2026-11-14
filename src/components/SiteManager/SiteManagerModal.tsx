@@ -5,6 +5,7 @@ import {
   Copy,
   Trash2,
   Lock,
+  Unlock,
   Key,
   Shield,
   ShieldAlert,
@@ -16,6 +17,11 @@ import {
   Terminal,
   Play,
   Edit3,
+  Download,
+  Upload,
+  ChevronDown,
+  Check,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   AuthMethod,
@@ -68,6 +74,38 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   // Form state for currently edited profile
   const [formProfile, setFormProfile] = useState<ConnectionProfile | null>(null);
   const [formSecret, setFormSecret] = useState<string>("");
+
+  // Lock site state (persisted to localStorage)
+  const [sitesLocked, setSitesLocked] = useState<boolean>(() => {
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        return window.localStorage.getItem("linuxscp:site_manager_locked") === "true";
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  });
+
+  // Config dropdown menu state
+  const [configMenuOpen, setConfigMenuOpen] = useState(false);
+  const configMenuRef = useRef<HTMLDivElement>(null);
+
+  // Export dialog state
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportPath, setExportPath] = useState("");
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Import dialog state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importConfirmOpen, setImportConfirmOpen] = useState(false);
+  const [pendingImportJson, setPendingImportJson] = useState("");
+  const [pendingImportCount, setPendingImportCount] = useState(0);
+  const [pendingImportFileName, setPendingImportFileName] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Success / feedback banner state
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
   // Load profiles list and probe keyring
   const loadProfiles = useCallback(
@@ -157,6 +195,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
   // Handle creating a new profile
   const handleNewProfile = () => {
+    if (sitesLocked) return;
     const newId = `new-${Date.now()}`;
     const defaultProfile: ConnectionProfile = {
       id: newId,
@@ -188,7 +227,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
   // Handle duplicating current profile
   const handleDuplicate = async () => {
-    if (!selectedId || !formProfile) return;
+    if (sitesLocked || !selectedId || !formProfile) return;
     setIsSaving(true);
     setErrorMessage(null);
     try {
@@ -203,6 +242,169 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
       );
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  // Handle lock toggle
+  const handleToggleLock = () => {
+    setSitesLocked((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined" && window.localStorage) {
+        try {
+          window.localStorage.setItem("linuxscp:site_manager_locked", String(next));
+        } catch {
+          // ignore
+        }
+      }
+      return next;
+    });
+  };
+
+  // Close config dropdown menu on click outside
+  useEffect(() => {
+    if (!configMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (configMenuRef.current && !configMenuRef.current.contains(e.target as Node)) {
+        setConfigMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [configMenuOpen]);
+
+  // Generate date-time formatted filename: linuxscp-sites-YYYYMMDD-HHmmss.json
+  const generateExportFilename = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    const mm = pad(d.getMonth() + 1);
+    const dd = pad(d.getDate());
+    const hh = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    const ss = pad(d.getSeconds());
+    return `linuxscp-sites-${yyyy}${mm}${dd}-${hh}${min}${ss}.json`;
+  };
+
+  // Open Export dialog
+  const handleOpenExport = async () => {
+    setConfigMenuOpen(false);
+    setErrorMessage(null);
+    setFeedbackMessage(null);
+    let defaultDir = "";
+    try {
+      defaultDir = await IpcClient.getHomeDirectory();
+    } catch {
+      defaultDir = "~";
+    }
+    const filename = generateExportFilename();
+    const fullDefault = defaultDir ? `${defaultDir.replace(/\/$/, "")}/${filename}` : filename;
+    setExportPath(fullDefault);
+    setExportDialogOpen(true);
+  };
+
+  // Execute Export
+  const handleExecuteExport = async () => {
+    if (!exportPath.trim()) return;
+    setIsExporting(true);
+    setErrorMessage(null);
+    try {
+      const result = await IpcClient.exportConnectionProfiles(exportPath.trim());
+      // Also trigger browser download if available
+      try {
+        const blob = new Blob([result.json_content], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = exportPath.trim().split("/").pop() || generateExportFilename();
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch {
+        // ignore in headless test
+      }
+      setFeedbackMessage(
+        `Successfully exported ${result.count} site configuration(s) to ${result.file_path || exportPath.trim()}`
+      );
+      setExportDialogOpen(false);
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Failed to export site configurations";
+      setErrorMessage(msg);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Trigger file selection for Import
+  const handleTriggerImportFile = () => {
+    setConfigMenuOpen(false);
+    setErrorMessage(null);
+    setFeedbackMessage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handle selected Import file
+  const handleImportFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const content = String(reader.result || "");
+        const parsed = JSON.parse(content);
+        const count = Array.isArray(parsed)
+          ? parsed.length
+          : Array.isArray(parsed?.profiles)
+            ? parsed.profiles.length
+            : 0;
+
+        if (count === 0) {
+          setErrorMessage("The selected file contains no valid site configurations to import.");
+          return;
+        }
+
+        setPendingImportJson(content);
+        setPendingImportCount(count);
+        setPendingImportFileName(file.name);
+        setImportConfirmOpen(true);
+      } catch {
+        setErrorMessage("Invalid JSON file: unable to parse site configurations.");
+      }
+    };
+    reader.onerror = () => {
+      setErrorMessage("Failed to read the selected file.");
+    };
+    reader.readAsText(file);
+  };
+
+  // Execute Import (merge or replace)
+  const handleExecuteImport = async (mode: "merge" | "replace") => {
+    if (!pendingImportJson) return;
+    setIsImporting(true);
+    setErrorMessage(null);
+    try {
+      const result = await IpcClient.importConnectionProfiles(pendingImportJson, mode);
+      setImportConfirmOpen(false);
+      setPendingImportJson("");
+      await loadProfiles();
+      setFeedbackMessage(
+        `Successfully imported ${result.imported_count} site(s) (${mode === "merge" ? "Merged" : "Replaced"}). Total sites: ${result.total_count}`
+      );
+    } catch (err: unknown) {
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Failed to import site configurations";
+      setErrorMessage(msg);
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -272,6 +474,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
 
   // Prompt delete confirmation
   const handlePromptDelete = (profile?: ConnectionProfileSummary | ConnectionProfile) => {
+    if (sitesLocked) return;
     const target = profile || formProfile;
     if (!target) return;
     setProfileToDelete(target);
@@ -354,6 +557,21 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
   // Save profile handler
   const handleSave = async (action: "save" | "connect" | "terminal" = "save") => {
     if (!formProfile) return;
+
+    if (sitesLocked) {
+      if (action === "connect") {
+        onSelectAndConnect?.(formProfile);
+        onClose();
+        return;
+      }
+      if (action === "terminal") {
+        onOpenTerminal?.(formProfile);
+        return;
+      }
+      setErrorMessage("Site configurations are locked. Unlock sites to make changes.");
+      return;
+    }
+
     setIsSaving(true);
     setErrorMessage(null);
 
@@ -462,8 +680,9 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                 <button
                   type="button"
                   onClick={handleNewProfile}
-                  className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded bg-commander-accent/20 hover:bg-commander-accent/30 text-commander-accent text-xs font-medium transition-colors"
-                  title="Create new profile"
+                  disabled={sitesLocked}
+                  className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded bg-commander-accent/20 hover:bg-commander-accent/30 text-commander-accent text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={sitesLocked ? "Site configurations are locked against edits" : "Create new profile"}
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>New</span>
@@ -472,9 +691,9 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                 <button
                   type="button"
                   onClick={handleDuplicate}
-                  disabled={!selectedId || !formProfile}
+                  disabled={sitesLocked || !selectedId || !formProfile}
                   className="flex items-center justify-center p-1 rounded border border-commander-border hover:bg-commander-dark text-commander-subtext hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Duplicate selected profile"
+                  title={sitesLocked ? "Site configurations are locked against edits" : "Duplicate selected profile"}
                 >
                   <Copy className="w-3.5 h-3.5" />
                 </button>
@@ -482,9 +701,9 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handlePromptDelete()}
-                  disabled={!selectedId || !formProfile}
+                  disabled={sitesLocked || !selectedId || !formProfile}
                   className="flex items-center justify-center p-1 rounded border border-rose-900/60 hover:bg-rose-950/40 text-rose-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  title="Delete selected profile"
+                  title={sitesLocked ? "Site configurations are locked against edits" : "Delete selected profile"}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -552,21 +771,131 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
               )}
             </div>
 
-            {/* Keyring status footer in sidebar */}
-            <div className="p-2 border-t border-commander-border text-[11px] text-commander-subtext flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                {keyringAvailable ? (
-                  <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                ) : (
-                  <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
-                )}
-                <span>{keyringAvailable ? "Secret Service: Active" : "Keyring: Inaccessible"}</span>
+            {/* Hidden file input for import */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={handleImportFileSelected}
+              className="hidden"
+              data-testid="site-import-file-input"
+            />
+
+            {/* Sidebar Bottom Toolbar: Config (Export/Import) & Lock Site */}
+            <div className="p-2 border-t border-commander-border bg-commander-surface/40 flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-1 relative">
+                {/* Export / Import Menu */}
+                <div className="relative" ref={configMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setConfigMenuOpen((prev) => !prev)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-commander-dark hover:bg-commander-selected border border-commander-border text-xs text-commander-text hover:text-white transition-colors"
+                    title="Export or Import site configurations"
+                    aria-label="Configuration Menu"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-commander-accent" />
+                    <span>Config</span>
+                    <ChevronDown className="w-3 h-3 text-commander-subtext" />
+                  </button>
+
+                  {configMenuOpen && (
+                    <div
+                      className="absolute left-0 bottom-full mb-1 w-44 py-1 rounded bg-commander-surface border border-commander-border shadow-xl z-50 text-xs"
+                      role="menu"
+                    >
+                      <button
+                        type="button"
+                        onClick={handleOpenExport}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-commander-text text-left transition-colors"
+                        role="menuitem"
+                      >
+                        <Download className="w-3.5 h-3.5 text-sky-400" />
+                        <span>Export Sites...</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleTriggerImportFile}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-commander-dark text-commander-text text-left transition-colors"
+                        role="menuitem"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Import Sites...</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lock Site Toggle */}
+                <button
+                  type="button"
+                  onClick={handleToggleLock}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded border text-xs transition-colors ${
+                    sitesLocked
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/60 hover:bg-amber-500/30 font-medium"
+                      : "bg-commander-dark border-commander-border text-commander-text hover:bg-commander-selected hover:text-white"
+                  }`}
+                  title={
+                    sitesLocked
+                      ? "Site configurations are locked. Click to allow editing."
+                      : "Lock site configurations to prevent edits or deletions."
+                  }
+                  aria-label={sitesLocked ? "Unlock Sites" : "Lock Site"}
+                >
+                  {sitesLocked ? (
+                    <>
+                      <Lock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Locked</span>
+                    </>
+                  ) : (
+                    <>
+                      <Unlock className="w-3.5 h-3.5 text-commander-subtext" />
+                      <span>Lock Site</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Keyring status footer in sidebar */}
+              <div className="text-[10px] text-commander-subtext/80 flex items-center justify-between pt-0.5">
+                <div className="flex items-center gap-1">
+                  {keyringAvailable ? (
+                    <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : (
+                    <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                  )}
+                  <span>{keyringAvailable ? "Secret Service: Active" : "Keyring: Inaccessible"}</span>
+                </div>
               </div>
             </div>
           </div>
 
           {/* Right Main Pane: Profile Editor */}
           <div className="flex-1 flex flex-col min-h-0 bg-commander-surface overflow-y-auto p-4 space-y-4">
+            {feedbackMessage && (
+              <div className="flex items-center justify-between gap-2 p-2.5 rounded bg-emerald-950/80 border border-emerald-800 text-xs text-emerald-200">
+                <div className="flex items-center gap-2">
+                  <Check className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{feedbackMessage}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFeedbackMessage(null)}
+                  className="p-0.5 hover:text-white text-emerald-300"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {sitesLocked && formProfile && (
+              <div className="flex items-center gap-2 p-2.5 rounded bg-amber-950/60 border border-amber-600/70 text-xs text-amber-200">
+                <Lock className="w-4 h-4 shrink-0 text-amber-400" />
+                <span>
+                  Site configurations are locked. Click &apos;Locked&apos; at the bottom of the left column to unlock and make changes.
+                </span>
+              </div>
+            )}
+
             {errorMessage && (
               <div className="flex items-center gap-2 p-2.5 rounded bg-rose-950/80 border border-rose-800 text-xs text-rose-200">
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
@@ -584,7 +913,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                 </p>
               </div>
             ) : (
-              <div className="space-y-4 text-xs">
+              <fieldset disabled={sitesLocked} className="space-y-4 text-xs border-0 p-0 m-0 disabled:opacity-85">
                 {/* Section 1: General & Host */}
                 <div className="rounded border border-commander-border p-3 space-y-3 bg-commander-darker/40">
                   <h3 className="font-semibold text-commander-accent text-[11px] uppercase tracking-wider">
@@ -1033,7 +1362,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
                     </div>
                   </div>
                 </div>
-              </div>
+              </fieldset>
             )}
           </div>
         </div>
@@ -1076,7 +1405,8 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
             <button
               type="button"
               onClick={() => handleSave("save")}
-              disabled={!formProfile || isSaving}
+              disabled={!formProfile || isSaving || sitesLocked}
+              title={sitesLocked ? "Site configurations are locked. Unlock to save changes." : undefined}
               className="px-3.5 py-1.5 text-xs rounded font-medium bg-commander-selected hover:bg-commander-selected/80 text-white transition-colors disabled:opacity-50"
             >
               {isSaving ? "Saving..." : "Save Profile"}
@@ -1088,7 +1418,7 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
               disabled={!formProfile || isSaving}
               className="px-4 py-1.5 text-xs rounded font-medium bg-commander-accent hover:bg-commander-accent/90 text-commander-dark transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {isSaving ? "Saving..." : "Save & Connect"}
+              {isSaving ? "Saving..." : sitesLocked ? "Connect" : "Save & Connect"}
             </button>
           </div>
         </div>
@@ -1138,21 +1468,25 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
             <span>Edit</span>
           </button>
 
-          <div className="my-1 border-t border-commander-border/60" />
+          {!sitesLocked && (
+            <>
+              <div className="my-1 border-t border-commander-border/60" />
 
-          <button
-            type="button"
-            onClick={() => {
-              const target = contextMenu.profile;
-              setContextMenu(null);
-              handlePromptDelete(target);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-950/40 text-left transition-colors text-rose-400 hover:text-rose-300"
-            role="menuitem"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete</span>
-          </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = contextMenu.profile;
+                  setContextMenu(null);
+                  handlePromptDelete(target);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-950/40 text-left transition-colors text-rose-400 hover:text-rose-300"
+                role="menuitem"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -1171,6 +1505,156 @@ export const SiteManagerModal: React.FC<SiteManagerModalProps> = ({
           setProfileToDelete(null);
         }}
       />
+
+      {/* Export Configurations Modal */}
+      {exportDialogOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="export-dialog-title"
+        >
+          <div className="w-full max-w-md rounded-lg border border-commander-border bg-commander-surface shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-commander-darker border-b border-commander-border">
+              <div className="flex items-center gap-2">
+                <Download className="w-4 h-4 text-commander-accent" />
+                <h3 id="export-dialog-title" className="text-sm font-semibold text-commander-text">
+                  Export Site Configurations
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExportDialogOpen(false)}
+                className="p-1 rounded hover:bg-commander-dark text-commander-subtext hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
+              <p className="text-commander-subtext leading-relaxed">
+                Export all {profiles.length} site configuration(s) into a JSON file. Secret credentials and passwords are safe in Linux Secret Service and excluded from exports.
+              </p>
+
+              <div>
+                <label className="block text-commander-subtext mb-1 font-medium">
+                  Save File Destination Path:
+                </label>
+                <input
+                  type="text"
+                  value={exportPath}
+                  onChange={(e) => setExportPath(e.target.value)}
+                  placeholder="/home/user/linuxscp-sites.json"
+                  className="w-full px-2.5 py-1.5 text-xs font-mono bg-commander-dark border border-commander-border rounded text-commander-text focus:outline-none focus:border-commander-accent"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-4 py-3 bg-commander-darker border-t border-commander-border">
+              <button
+                type="button"
+                onClick={() => setExportDialogOpen(false)}
+                disabled={isExporting}
+                className="px-3 py-1.5 text-xs rounded border border-commander-border hover:bg-commander-dark text-commander-subtext hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteExport}
+                disabled={isExporting || !exportPath.trim()}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded font-medium bg-commander-accent hover:bg-commander-accent/90 text-commander-dark transition-colors disabled:opacity-50"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isExporting ? "Exporting..." : "Export Sites"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Configurations Modal */}
+      {importConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 select-none"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="import-dialog-title"
+        >
+          <div className="w-full max-w-lg rounded-lg border border-commander-border bg-commander-surface shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+            <div className="flex items-center justify-between px-4 py-2.5 bg-commander-darker border-b border-commander-border">
+              <div className="flex items-center gap-2">
+                <Upload className="w-4 h-4 text-emerald-400" />
+                <h3 id="import-dialog-title" className="text-sm font-semibold text-commander-text">
+                  Import Site Configurations
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImportConfirmOpen(false)}
+                className="p-1 rounded hover:bg-commander-dark text-commander-subtext hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
+              <p className="text-commander-text leading-relaxed">
+                Found <span className="font-semibold text-commander-accent">{pendingImportCount}</span> site configuration(s) in <span className="font-mono text-commander-subtext font-semibold">{pendingImportFileName}</span>.
+              </p>
+
+              <p className="text-commander-subtext leading-relaxed">
+                Choose how you would like to import these site configurations:
+              </p>
+
+              <div className="space-y-2 pt-1">
+                <div className="p-3 rounded border border-commander-border bg-commander-darker/60 flex items-start gap-2">
+                  <span className="font-semibold text-sky-400 shrink-0 mt-0.5">Merge:</span>
+                  <span className="text-commander-subtext">
+                    Add new sites and update matching sites. Any existing non-conflicting sites remain unchanged.
+                  </span>
+                </div>
+
+                <div className="p-3 rounded border border-rose-900/60 bg-rose-950/20 flex items-start gap-2">
+                  <span className="font-semibold text-rose-400 shrink-0 mt-0.5">Replace:</span>
+                  <span className="text-rose-200/80">
+                    WARNING: Removes all existing sites currently in Site Manager and replaces them completely with the imported file.
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-4 py-3 bg-commander-darker border-t border-commander-border">
+              <button
+                type="button"
+                onClick={() => setImportConfirmOpen(false)}
+                disabled={isImporting}
+                className="px-3 py-1.5 text-xs rounded border border-commander-border hover:bg-commander-dark text-commander-subtext hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExecuteImport("replace")}
+                disabled={isImporting}
+                className="px-3.5 py-1.5 text-xs rounded font-medium border border-rose-800 bg-rose-950/60 hover:bg-rose-900 text-rose-200 transition-colors disabled:opacity-50"
+              >
+                {isImporting ? "Importing..." : "Replace Existing"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExecuteImport("merge")}
+                disabled={isImporting}
+                className="px-3.5 py-1.5 text-xs rounded font-medium bg-commander-accent hover:bg-commander-accent/90 text-commander-dark transition-colors disabled:opacity-50 font-semibold"
+              >
+                {isImporting ? "Importing..." : "Merge Sites"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

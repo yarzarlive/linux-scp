@@ -28,7 +28,8 @@ use commands::filesystem::{
 };
 use commands::profile::{
     check_keyring_status, delete_connection_profile, duplicate_connection_profile,
-    get_connection_profile, list_connection_profiles, save_connection_profile,
+    export_connection_profiles, get_connection_profile, import_connection_profiles,
+    list_connection_profiles, save_connection_profile,
 };
 use commands::session::{
     check_remote_path_is_dir, connect_sftp_session, create_remote_directory, create_remote_file,
@@ -120,6 +121,8 @@ pub fn run() {
             save_connection_profile,
             duplicate_connection_profile,
             delete_connection_profile,
+            export_connection_profiles,
+            import_connection_profiles,
             check_keyring_status,
             connect_sftp_session,
             disconnect_sftp_session,

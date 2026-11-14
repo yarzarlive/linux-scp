@@ -344,4 +344,143 @@ describe("SiteManagerModal Component", () => {
       expect(deleteSpy).toHaveBeenCalledWith("profile-1");
     });
   });
+
+  it("handles site export flow and invokes export IPC", async () => {
+    vi.spyOn(IpcClient, "getHomeDirectory").mockResolvedValue("/home/testuser");
+    const exportSpy = vi.spyOn(IpcClient, "exportConnectionProfiles").mockResolvedValue({
+      file_path: "/home/testuser/linuxscp-sites-exported.json",
+      json_content: JSON.stringify({ profiles: mockSummaryList }),
+      count: 2,
+    });
+
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Production Web")).toBeInTheDocument();
+    });
+
+    // Open Config menu at bottom of left column
+    const configBtn = screen.getByRole("button", { name: "Configuration Menu" });
+    fireEvent.click(configBtn);
+
+    // Click Export Sites...
+    const exportMenuItem = screen.getByRole("menuitem", { name: /Export Sites.../i });
+    fireEvent.click(exportMenuItem);
+
+    // Verify Export dialog opens
+    await waitFor(() => {
+      expect(screen.getByText("Export Site Configurations")).toBeInTheDocument();
+    });
+
+    const pathInput = screen.getByPlaceholderText("/home/user/linuxscp-sites.json") as HTMLInputElement;
+    expect(pathInput.value).toContain("/home/testuser/linuxscp-sites-");
+    expect(pathInput.value).toMatch(/\.json$/);
+
+    // Click confirm export
+    const confirmExportBtn = screen.getByRole("button", { name: "Export Sites" });
+    fireEvent.click(confirmExportBtn);
+
+    await waitFor(() => {
+      expect(exportSpy).toHaveBeenCalledWith(expect.stringContaining("/home/testuser/linuxscp-sites-"));
+      expect(screen.getByText(/Successfully exported 2 site configuration/i)).toBeInTheDocument();
+    });
+  });
+
+  it("handles site import flow and allows user to choose merge or replace", async () => {
+    const importSpy = vi.spyOn(IpcClient, "importConnectionProfiles").mockResolvedValue({
+      imported_count: 2,
+      total_count: 4,
+      mode: "merge",
+    });
+
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Production Web")).toBeInTheDocument();
+    });
+
+    const fileInput = screen.getByTestId("site-import-file-input") as HTMLInputElement;
+    const mockJson = JSON.stringify({
+      version: 1,
+      app: "LinuxSCP",
+      profiles: [
+        {
+          id: "import-1",
+          name: "Imported Server 1",
+          protocol: "SFTP",
+          host: "10.0.0.1",
+          port: 22,
+          username: "user1",
+        },
+        {
+          id: "import-2",
+          name: "Imported Server 2",
+          protocol: "SFTP",
+          host: "10.0.0.2",
+          port: 22,
+          username: "user2",
+        },
+      ],
+    });
+
+    const file = new File([mockJson], "my-backup.json", { type: "application/json" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    // Verify import confirmation dialog appears
+    await waitFor(() => {
+      expect(screen.getByText("Import Site Configurations")).toBeInTheDocument();
+      expect(screen.getByText(/Found/i)).toBeInTheDocument();
+      expect(screen.getByText("2")).toBeInTheDocument();
+    });
+
+    // Test Merge Sites
+    const mergeBtn = screen.getByRole("button", { name: "Merge Sites" });
+    fireEvent.click(mergeBtn);
+
+    await waitFor(() => {
+      expect(importSpy).toHaveBeenCalledWith(mockJson, "merge");
+      expect(screen.getByText(/Successfully imported 2 site\(s\) \(Merged\)/i)).toBeInTheDocument();
+    });
+  });
+
+  it("toggles Lock Site and disables editing existing sites", async () => {
+    // Clear any previous locked state in localStorage
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.removeItem("linuxscp:site_manager_locked");
+    }
+
+    render(<SiteManagerModal isOpen={true} onClose={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("Production Web")).toBeInTheDocument();
+    });
+
+    const lockToggleBtn = screen.getByRole("button", { name: "Lock Site" });
+    expect(lockToggleBtn).toBeInTheDocument();
+
+    const nameInput = screen.getByDisplayValue("Production Web") as HTMLInputElement;
+    expect(nameInput).not.toBeDisabled();
+
+    const saveBtn = screen.getByRole("button", { name: "Save Profile" });
+    expect(saveBtn).not.toBeDisabled();
+
+    // Toggle Lock
+    fireEvent.click(lockToggleBtn);
+
+    // Verify button text changes to Locked
+    expect(screen.getByRole("button", { name: "Unlock Sites" })).toBeInTheDocument();
+    expect(screen.getByText("Locked")).toBeInTheDocument();
+
+    // Verify banner and disabled state
+    expect(screen.getByText(/Site configurations are locked/i)).toBeInTheDocument();
+    expect(nameInput).toBeDisabled();
+    expect(saveBtn).toBeDisabled();
+
+    // Toggle back to unlock
+    fireEvent.click(screen.getByRole("button", { name: "Unlock Sites" }));
+
+    expect(screen.getByRole("button", { name: "Lock Site" })).toBeInTheDocument();
+    expect(nameInput).not.toBeDisabled();
+    expect(saveBtn).not.toBeDisabled();
+  });
 });

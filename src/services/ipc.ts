@@ -196,6 +196,31 @@ export class IpcClient {
   }
 
   /**
+   * Exports all connection profiles as formatted JSON.
+   */
+  static async exportConnectionProfiles(
+    destinationPath?: string
+  ): Promise<{ file_path?: string; json_content: string; count: number }> {
+    return this.invokeCommand<{ file_path?: string; json_content: string; count: number }>(
+      "export_connection_profiles",
+      { destinationPath: destinationPath || null }
+    );
+  }
+
+  /**
+   * Imports connection profiles from JSON string via 'merge' or 'replace' mode.
+   */
+  static async importConnectionProfiles(
+    jsonContent: string,
+    mode: "merge" | "replace"
+  ): Promise<{ imported_count: number; total_count: number; mode: string }> {
+    return this.invokeCommand<{ imported_count: number; total_count: number; mode: string }>(
+      "import_connection_profiles",
+      { jsonContent, mode }
+    );
+  }
+
+  /**
    * Connects to an SFTP server using a saved profile ID.
    */
   static async connectSftpSession(profileId: string, secret?: string): Promise<ConnectOutcome> {

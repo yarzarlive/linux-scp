@@ -290,6 +290,16 @@ impl<'a> ProfileRepository<'a> {
         Ok(())
     }
 
+    /// Deletes all saved connection profiles from the database.
+    pub fn clear_all_profiles(&self) -> Result<(), AppError> {
+        let conn = self.db.connection();
+        conn.execute("DELETE FROM connection_profiles", [])
+            .map_err(|e| {
+                AppError::Database(format!("Failed to clear connection profiles: {}", e))
+            })?;
+        Ok(())
+    }
+
     /// Duplicates an existing profile under a new ID and name.
     pub fn duplicate_profile(
         &self,

@@ -163,4 +163,29 @@ describe("IpcClient", () => {
     await IpcClient.setThemePreference("dark");
     expect(invoke).toHaveBeenCalledWith("set_theme_preference", { theme: "dark" });
   });
+
+  it("exports and imports connection profiles via IPC", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      file_path: "/home/user/sites.json",
+      json_content: "{}",
+      count: 3,
+    });
+    const exportRes = await IpcClient.exportConnectionProfiles("/home/user/sites.json");
+    expect(exportRes.count).toBe(3);
+    expect(invoke).toHaveBeenCalledWith("export_connection_profiles", {
+      destinationPath: "/home/user/sites.json",
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      imported_count: 3,
+      total_count: 5,
+      mode: "merge",
+    });
+    const importRes = await IpcClient.importConnectionProfiles("{}", "merge");
+    expect(importRes.imported_count).toBe(3);
+    expect(invoke).toHaveBeenCalledWith("import_connection_profiles", {
+      jsonContent: "{}",
+      mode: "merge",
+    });
+  });
 });
