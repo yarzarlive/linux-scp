@@ -223,34 +223,51 @@ export class IpcClient {
   /**
    * Connects to an SFTP server using a saved profile ID.
    */
-  static async connectSftpSession(profileId: string, secret?: string): Promise<ConnectOutcome> {
+  static async connectSftpSession(
+    profileId: string,
+    secret?: string,
+    sessionId?: string
+  ): Promise<ConnectOutcome> {
     return this.invokeCommand<ConnectOutcome>("connect_sftp_session", {
       profileId,
       secret,
+      sessionId: sessionId || null,
     });
   }
 
   /**
-   * Disconnects the active SFTP session or cancels an in-progress connection.
+   * Disconnects a remote session (or the active session if sessionId omitted).
    */
-  static async disconnectSftpSession(): Promise<SessionStateSnapshot> {
-    return this.invokeCommand<SessionStateSnapshot>("disconnect_sftp_session");
+  static async disconnectSftpSession(sessionId?: string): Promise<SessionStateSnapshot> {
+    return this.invokeCommand<SessionStateSnapshot>("disconnect_sftp_session", {
+      sessionId: sessionId || null,
+    });
   }
 
   /**
-   * Reconnects to the most recently used connection profile.
+   * Reconnects to the most recently used connection profile for a session.
    */
-  static async reconnectSftpSession(secret?: string): Promise<ConnectOutcome> {
+  static async reconnectSftpSession(secret?: string, sessionId?: string): Promise<ConnectOutcome> {
     return this.invokeCommand<ConnectOutcome>("reconnect_sftp_session", {
       secret,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Retrieves the current session lifecycle state snapshot.
    */
-  static async getSessionState(): Promise<SessionStateSnapshot> {
-    return this.invokeCommand<SessionStateSnapshot>("get_session_state");
+  static async getSessionState(sessionId?: string): Promise<SessionStateSnapshot> {
+    return this.invokeCommand<SessionStateSnapshot>("get_session_state", {
+      sessionId: sessionId || null,
+    });
+  }
+
+  /**
+   * Sets the currently active / focused session ID.
+   */
+  static async setActiveSession(sessionId: string): Promise<void> {
+    return this.invokeCommand<void>("set_active_session", { sessionId });
   }
 
   /**
@@ -284,69 +301,93 @@ export class IpcClient {
    */
   static async listRemoteDirectory(
     path?: string,
-    showHidden?: boolean
+    showHidden?: boolean,
+    sessionId?: string
   ): Promise<RemoteDirectoryListing> {
     return this.invokeCommand<RemoteDirectoryListing>("list_remote_directory", {
       path,
       showHidden,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Checks whether a remote path (following symlinks) points to a directory.
    */
-  static async checkRemotePathIsDir(path: string): Promise<boolean> {
+  static async checkRemotePathIsDir(path: string, sessionId?: string): Promise<boolean> {
     return this.invokeCommand<boolean>("check_remote_path_is_dir", {
       path,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Creates a new directory on the active remote SFTP server.
    */
-  static async createRemoteDirectory(parentPath: string, dirName: string): Promise<string> {
+  static async createRemoteDirectory(
+    parentPath: string,
+    dirName: string,
+    sessionId?: string
+  ): Promise<string> {
     return this.invokeCommand<string>("create_remote_directory", {
       parentPath,
       dirName,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Creates a new empty file on the active remote SFTP server.
    */
-  static async createRemoteFile(parentPath: string, fileName: string): Promise<string> {
+  static async createRemoteFile(
+    parentPath: string,
+    fileName: string,
+    sessionId?: string
+  ): Promise<string> {
     return this.invokeCommand<string>("create_remote_file", {
       parentPath,
       fileName,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Renames a remote file or directory.
    */
-  static async renameRemoteEntry(sourcePath: string, newName: string): Promise<string> {
+  static async renameRemoteEntry(
+    sourcePath: string,
+    newName: string,
+    sessionId?: string
+  ): Promise<string> {
     return this.invokeCommand<string>("rename_remote_entry", {
       sourcePath,
       newName,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Deletes a remote file or symlink.
    */
-  static async deleteRemoteFile(path: string): Promise<void> {
+  static async deleteRemoteFile(path: string, sessionId?: string): Promise<void> {
     return this.invokeCommand<void>("delete_remote_file", {
       path,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Deletes a remote directory (non-recursive unless explicitly confirmed).
    */
-  static async deleteRemoteDirectory(path: string, recursive: boolean): Promise<void> {
+  static async deleteRemoteDirectory(
+    path: string,
+    recursive: boolean,
+    sessionId?: string
+  ): Promise<void> {
     return this.invokeCommand<void>("delete_remote_directory", {
       path,
       recursive,
+      sessionId: sessionId || null,
     });
   }
 
@@ -356,12 +397,14 @@ export class IpcClient {
   static async setRemotePermissions(
     paths: string[],
     octalMode: string,
-    recursive: boolean
+    recursive: boolean,
+    sessionId?: string
   ): Promise<void> {
     return this.invokeCommand<void>("set_remote_permissions", {
       paths,
       octalMode,
       recursive,
+      sessionId: sessionId || null,
     });
   }
 
@@ -373,7 +416,8 @@ export class IpcClient {
     uid?: number,
     gid?: number,
     userName?: string,
-    groupName?: string
+    groupName?: string,
+    sessionId?: string
   ): Promise<void> {
     return this.invokeCommand<void>("set_remote_ownership", {
       path,
@@ -381,16 +425,22 @@ export class IpcClient {
       gid,
       userName,
       groupName,
+      sessionId: sessionId || null,
     });
   }
 
   /**
    * Optionally resolves numeric UID/GID to names via remote `getent`.
    */
-  static async resolveRemoteIdentity(uid?: number, gid?: number): Promise<FileOwnership> {
+  static async resolveRemoteIdentity(
+    uid?: number,
+    gid?: number,
+    sessionId?: string
+  ): Promise<FileOwnership> {
     return this.invokeCommand<FileOwnership>("resolve_remote_identity", {
       uid,
       gid,
+      sessionId: sessionId || null,
     });
   }
 
@@ -400,12 +450,14 @@ export class IpcClient {
   static async enqueueUploads(
     localPaths: string[],
     remoteDir: string,
-    conflictPolicy: ConflictPolicy = "ask"
+    conflictPolicy: ConflictPolicy = "ask",
+    sessionId?: string
   ): Promise<TransferJob[]> {
     return this.invokeCommand<TransferJob[]>("enqueue_uploads", {
       localPaths,
       remoteDir,
       conflictPolicy,
+      sessionId: sessionId || null,
     });
   }
 
@@ -415,12 +467,14 @@ export class IpcClient {
   static async enqueueDownloads(
     remotePaths: string[],
     localDir: string,
-    conflictPolicy: ConflictPolicy = "ask"
+    conflictPolicy: ConflictPolicy = "ask",
+    sessionId?: string
   ): Promise<TransferJob[]> {
     return this.invokeCommand<TransferJob[]>("enqueue_downloads", {
       remotePaths,
       localDir,
       conflictPolicy,
+      sessionId: sessionId || null,
     });
   }
 

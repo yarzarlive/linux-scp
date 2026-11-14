@@ -35,7 +35,8 @@ use commands::session::{
     check_remote_path_is_dir, connect_sftp_session, create_remote_directory, create_remote_file,
     delete_remote_directory, delete_remote_file, disconnect_sftp_session, get_session_state,
     list_known_hosts, list_remote_directory, reconnect_sftp_session, rename_remote_entry,
-    resolve_remote_identity, set_remote_ownership, set_remote_permissions, trust_host_key,
+    resolve_remote_identity, set_active_session, set_remote_ownership, set_remote_permissions,
+    trust_host_key,
 };
 use commands::system::{get_system_info, get_theme_preference, ping_backend, set_theme_preference};
 use commands::terminal::{get_terminal_environment, launch_ssh_terminal, save_terminal_preference};
@@ -128,6 +129,7 @@ pub fn run() {
             disconnect_sftp_session,
             reconnect_sftp_session,
             get_session_state,
+            set_active_session,
             trust_host_key,
             list_known_hosts,
             list_remote_directory,

@@ -10,9 +10,15 @@ pub async fn enqueue_uploads(
     local_paths: Vec<String>,
     remote_dir: String,
     conflict_policy: Option<ConflictPolicy>,
+    session_id: Option<String>,
 ) -> Result<Vec<TransferJob>, AppError> {
     state
-        .enqueue_uploads(local_paths, remote_dir, conflict_policy.unwrap_or_default())
+        .enqueue_uploads_for_session(
+            local_paths,
+            remote_dir,
+            conflict_policy.unwrap_or_default(),
+            session_id,
+        )
         .await
 }
 
@@ -23,9 +29,15 @@ pub async fn enqueue_downloads(
     remote_paths: Vec<String>,
     local_dir: String,
     conflict_policy: Option<ConflictPolicy>,
+    session_id: Option<String>,
 ) -> Result<Vec<TransferJob>, AppError> {
     state
-        .enqueue_downloads(remote_paths, local_dir, conflict_policy.unwrap_or_default())
+        .enqueue_downloads_for_session(
+            remote_paths,
+            local_dir,
+            conflict_policy.unwrap_or_default(),
+            session_id,
+        )
         .await
 }
 

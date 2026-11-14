@@ -94,8 +94,11 @@ pub struct SessionStateSnapshot {
 
 struct InnerSessionState {
     status: SessionStatus,
-    active: Option<ActiveBackendConnection>,
+    active_session_id: Option<String>,
     last_profile: Option<ConnectionProfile>,
+    sessions: std::collections::HashMap<String, ActiveBackendConnection>,
+    session_statuses: std::collections::HashMap<String, SessionStatus>,
+    session_profiles: std::collections::HashMap<String, ConnectionProfile>,
 }
 
 /// Thread-safe manager tracking connection lifecycle, cancellation, and active session handles.
@@ -116,21 +119,75 @@ impl SessionManager {
         Self {
             inner: Arc::new(RwLock::new(InnerSessionState {
                 status: SessionStatus::Disconnected,
-                active: None,
+                active_session_id: None,
                 last_profile: None,
+                sessions: std::collections::HashMap::new(),
+                session_statuses: std::collections::HashMap::new(),
+                session_profiles: std::collections::HashMap::new(),
             })),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Returns a snapshot of the current connection lifecycle state.
+    /// Returns a snapshot of the current connection lifecycle state (defaults to active session).
     pub async fn snapshot(&self) -> SessionStateSnapshot {
+        self.snapshot_for(None).await
+    }
+
+    /// Returns a snapshot of the specified session ID (or active session if None).
+    pub async fn snapshot_for(&self, session_id: Option<&str>) -> SessionStateSnapshot {
         let guard = self.inner.read().await;
+        let target_id = session_id.or(guard.active_session_id.as_deref());
+        if let Some(sid) = target_id {
+            if let Some(active) = guard.sessions.get(sid) {
+                let status = guard
+                    .session_statuses
+                    .get(sid)
+                    .cloned()
+                    .unwrap_or(SessionStatus::Connected);
+                return SessionStateSnapshot {
+                    status,
+                    session: Some(active.session_meta().clone()),
+                    trusted_host_key: Some(active.trusted_host_key().clone()),
+                };
+            }
+            if let Some(status) = guard.session_statuses.get(sid) {
+                return SessionStateSnapshot {
+                    status: status.clone(),
+                    session: None,
+                    trusted_host_key: None,
+                };
+            }
+        }
         SessionStateSnapshot {
             status: guard.status.clone(),
-            session: guard.active.as_ref().map(|a| a.session_meta().clone()),
-            trusted_host_key: guard.active.as_ref().map(|a| a.trusted_host_key().clone()),
+            session: None,
+            trusted_host_key: None,
         }
+    }
+
+    /// Sets the currently focused/active session ID.
+    pub async fn set_active_session_id(&self, session_id: &str) {
+        let mut guard = self.inner.write().await;
+        if guard.sessions.contains_key(session_id) {
+            guard.active_session_id = Some(session_id.to_string());
+            guard.status = SessionStatus::Connected;
+        }
+    }
+
+    /// Returns the active session ID, if any.
+    pub async fn active_session_id(&self) -> Option<String> {
+        self.inner.read().await.active_session_id.clone()
+    }
+
+    /// Checks whether a specific session ID is actively connected.
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        self.inner.read().await.sessions.contains_key(session_id)
+    }
+
+    /// Returns the total number of connected remote sessions.
+    pub async fn session_count(&self) -> usize {
+        self.inner.read().await.sessions.len()
     }
 
     /// Connects to a remote server using the given profile, replacing any previous connection.
@@ -141,18 +198,42 @@ impl SessionManager {
         secret_override: Option<String>,
         is_reconnect: bool,
     ) -> Result<ConnectOutcome, AppError> {
-        let my_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.connect_with_session_id(profile, secret_override, is_reconnect, None)
+            .await
+    }
 
-        // Close any existing session first
+    /// Connects to a remote server using the given profile, optionally replacing a specific existing session ID.
+    pub async fn connect_with_session_id(
+        &self,
+        profile: ConnectionProfile,
+        secret_override: Option<String>,
+        is_reconnect: bool,
+        replace_session_id: Option<String>,
+    ) -> Result<ConnectOutcome, AppError> {
+        let _my_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+        // Close any existing session for replace_session_id if specified
         let old_conn = {
             let mut guard = self.inner.write().await;
-            guard.status = if is_reconnect {
-                SessionStatus::Reconnecting
+            if let Some(ref old_sid) = replace_session_id {
+                guard.session_statuses.insert(
+                    old_sid.clone(),
+                    if is_reconnect {
+                        SessionStatus::Reconnecting
+                    } else {
+                        SessionStatus::Connecting
+                    },
+                );
+                guard.sessions.remove(old_sid)
             } else {
-                SessionStatus::Connecting
-            };
-            guard.last_profile = Some(profile.clone());
-            guard.active.take()
+                guard.status = if is_reconnect {
+                    SessionStatus::Reconnecting
+                } else {
+                    SessionStatus::Connecting
+                };
+                guard.last_profile = Some(profile.clone());
+                None
+            }
         };
 
         if let Some(conn) = old_conn {
@@ -174,43 +255,48 @@ impl SessionManager {
             }
         };
 
-        // Check if cancelled or superseded while connecting
-        if self.generation.load(Ordering::SeqCst) != my_gen {
-            if let Ok(Ok(conn)) = res {
-                let _ = conn.close().await;
-            }
-            return Err(AppError::Protocol(
-                "Connection attempt was cancelled".to_string(),
-            ));
-        }
-
         match res {
             Ok(Ok(active_conn)) => {
+                let session_id = active_conn.session_meta().session_id.0.clone();
                 let outcome = ConnectOutcome::Connected {
                     session: Box::new(active_conn.session_meta().clone()),
                     trusted_host_key: active_conn.trusted_host_key().clone(),
                 };
                 let mut guard = self.inner.write().await;
                 guard.status = SessionStatus::Connected;
-                guard.active = Some(active_conn);
+                guard.active_session_id = Some(session_id.clone());
+                guard.last_profile = Some(profile.clone());
+                guard
+                    .session_statuses
+                    .insert(session_id.clone(), SessionStatus::Connected);
+                guard.session_profiles.insert(session_id.clone(), profile);
+                guard.sessions.insert(session_id, active_conn);
                 Ok(outcome)
             }
             Ok(Err(host_key_outcome)) => {
                 let mut guard = self.inner.write().await;
-                guard.status = match &host_key_outcome {
+                let status = match &host_key_outcome {
                     ConnectOutcome::HostKeyChanged { .. } => SessionStatus::Failed {
                         error_message: "Remote host key has changed! Connection blocked."
                             .to_string(),
                     },
                     _ => SessionStatus::Disconnected,
                 };
+                guard.status = status.clone();
+                if let Some(ref old_sid) = replace_session_id {
+                    guard.session_statuses.insert(old_sid.clone(), status);
+                }
                 Ok(host_key_outcome)
             }
             Err(err) => {
                 let mut guard = self.inner.write().await;
-                guard.status = SessionStatus::Failed {
+                let status = SessionStatus::Failed {
                     error_message: err.to_string(),
                 };
+                guard.status = status.clone();
+                if let Some(ref old_sid) = replace_session_id {
+                    guard.session_statuses.insert(old_sid.clone(), status);
+                }
                 Err(err)
             }
         }
@@ -218,54 +304,102 @@ impl SessionManager {
 
     /// Gracefully disconnects the active session or cancels an in-progress connection.
     pub async fn disconnect(&self) -> Result<SessionStateSnapshot, AppError> {
+        self.disconnect_session(None).await
+    }
+
+    /// Gracefully disconnects a specific session (or active session if None).
+    pub async fn disconnect_session(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<SessionStateSnapshot, AppError> {
         self.generation.fetch_add(1, Ordering::SeqCst);
 
         let old_conn = {
             let mut guard = self.inner.write().await;
-            guard.status = SessionStatus::Disconnected;
-            guard.active.take()
+            let target_id = match session_id {
+                Some(sid) => Some(sid.to_string()),
+                None => guard.active_session_id.clone(),
+            };
+
+            if let Some(sid) = target_id {
+                guard
+                    .session_statuses
+                    .insert(sid.clone(), SessionStatus::Disconnected);
+                if guard.active_session_id.as_deref() == Some(&sid) {
+                    guard.active_session_id = guard.sessions.keys().find(|&k| k != &sid).cloned();
+                    if guard.active_session_id.is_none() {
+                        guard.status = SessionStatus::Disconnected;
+                    }
+                }
+                guard.sessions.remove(&sid)
+            } else {
+                guard.status = SessionStatus::Disconnected;
+                None
+            }
         };
 
         if let Some(conn) = old_conn {
             let _ = conn.close().await;
         }
 
-        Ok(self.snapshot().await)
+        Ok(self.snapshot_for(session_id).await)
     }
 
-    /// Reconnects to the last used profile.
+    /// Reconnects to the last used profile (defaults to active session).
     pub async fn reconnect(
         &self,
         secret_override: Option<String>,
     ) -> Result<ConnectOutcome, AppError> {
-        let profile = {
+        self.reconnect_session(secret_override, None).await
+    }
+
+    /// Reconnects a specific session (or active session if None).
+    pub async fn reconnect_session(
+        &self,
+        secret_override: Option<String>,
+        session_id: Option<&str>,
+    ) -> Result<ConnectOutcome, AppError> {
+        let (profile, old_sid) = {
             let guard = self.inner.read().await;
-            guard.last_profile.clone()
-        }
-        .ok_or_else(|| {
+            let target_sid = session_id.or(guard.active_session_id.as_deref());
+            let prof = target_sid
+                .and_then(|sid| guard.session_profiles.get(sid).cloned())
+                .or_else(|| guard.last_profile.clone());
+            (prof, target_sid.map(|s| s.to_string()))
+        };
+
+        let profile = profile.ok_or_else(|| {
             AppError::Validation("No previous connection profile to reconnect".to_string())
         })?;
 
-        self.connect(profile, secret_override, true).await
+        self.connect_with_session_id(profile, secret_override, true, old_sid)
+            .await
     }
 
-    /// Lists a remote directory using the active session.
+    /// Lists a remote directory using the active or specified session.
     /// Strictly rejects listing if active protocol is SCP (which does not support directory listing).
     pub async fn list_remote_directory(
         &self,
         path: Option<String>,
         show_hidden: bool,
+        session_id: Option<&str>,
     ) -> Result<RemoteDirectoryListing, AppError> {
-        let (sftp, current_path, home_path, profile_id, timeout_duration) = {
+        let (sftp, current_path, home_path, profile_id, timeout_duration, target_session_id) = {
             let guard = self.inner.read().await;
-            if guard.status != SessionStatus::Connected {
-                return Err(AppError::Protocol(
-                    "No active connection established".to_string(),
-                ));
-            }
-            let active = guard.active.as_ref().ok_or_else(|| {
-                AppError::Protocol("No active connection handle available".to_string())
+            let target_sid = match session_id {
+                Some(sid) => sid,
+                None => guard.active_session_id.as_deref().ok_or_else(|| {
+                    AppError::Protocol("No active connection established".to_string())
+                })?,
+            };
+
+            let active = guard.sessions.get(target_sid).ok_or_else(|| {
+                AppError::Protocol(format!(
+                    "No active connection handle available for session '{}'",
+                    target_sid
+                ))
             })?;
+
             match active {
                 ActiveBackendConnection::Sftp(sftp_conn) => {
                     let timeout_secs =
@@ -276,6 +410,7 @@ impl SessionManager {
                         sftp_conn.session_meta.home_remote_path.clone(),
                         sftp_conn.session_meta.profile_id.clone(),
                         Duration::from_secs(timeout_secs),
+                        target_sid.to_string(),
                     )
                 }
                 ActiveBackendConnection::Scp(_) => {
@@ -300,7 +435,9 @@ impl SessionManager {
         // Resolve user and group names for remote entries using session getent cache
         {
             let guard = self.inner.read().await;
-            if let Some(ActiveBackendConnection::Sftp(ref sftp_conn)) = guard.active {
+            if let Some(ActiveBackendConnection::Sftp(ref sftp_conn)) =
+                guard.sessions.get(&target_session_id)
+            {
                 resolve_identities_for_entries(
                     &sftp_conn.ssh_handle,
                     &sftp_conn.identity_cache,
@@ -313,7 +450,7 @@ impl SessionManager {
         // Update current_remote_path in session metadata
         {
             let mut guard = self.inner.write().await;
-            if let Some(active) = guard.active.as_mut() {
+            if let Some(active) = guard.sessions.get_mut(&target_session_id) {
                 active.session_meta_mut().current_remote_path = listing.current_path.clone();
                 active.session_meta_mut().last_active_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -338,16 +475,24 @@ impl SessionManager {
     }
 
     /// Checks whether a remote path (following symlinks) points to a directory.
-    pub async fn check_remote_path_is_dir(&self, path: String) -> Result<bool, AppError> {
+    pub async fn check_remote_path_is_dir(
+        &self,
+        path: String,
+        session_id: Option<&str>,
+    ) -> Result<bool, AppError> {
         let (sftp, timeout_duration) = {
             let guard = self.inner.read().await;
-            if guard.status != SessionStatus::Connected {
-                return Err(AppError::Protocol(
-                    "No active connection established".to_string(),
-                ));
-            }
-            let active = guard.active.as_ref().ok_or_else(|| {
-                AppError::Protocol("No active connection handle available".to_string())
+            let target_sid = match session_id {
+                Some(sid) => sid,
+                None => guard.active_session_id.as_deref().ok_or_else(|| {
+                    AppError::Protocol("No active connection established".to_string())
+                })?,
+            };
+            let active = guard.sessions.get(target_sid).ok_or_else(|| {
+                AppError::Protocol(format!(
+                    "No active connection handle available for session '{}'",
+                    target_sid
+                ))
             })?;
             match active {
                 ActiveBackendConnection::Sftp(sftp_conn) => {
@@ -373,13 +518,25 @@ impl SessionManager {
     /// Returns the active transfer context and settings for background transfer execution.
     pub async fn active_transfer_context(&self) -> Result<ActiveTransferContext, AppError> {
         let guard = self.inner.read().await;
-        if guard.status != SessionStatus::Connected {
-            return Err(AppError::Protocol(
-                "No active connection established".to_string(),
-            ));
-        }
-        let active = guard.active.as_ref().ok_or_else(|| {
-            AppError::Protocol("No active connection handle available".to_string())
+        let target_sid = guard
+            .active_session_id
+            .clone()
+            .ok_or_else(|| AppError::Protocol("No active connection established".to_string()))?;
+        drop(guard);
+        self.transfer_context_for(&target_sid).await
+    }
+
+    /// Returns the transfer context for a specific session ID.
+    pub async fn transfer_context_for(
+        &self,
+        session_id: &str,
+    ) -> Result<ActiveTransferContext, AppError> {
+        let guard = self.inner.read().await;
+        let active = guard.sessions.get(session_id).ok_or_else(|| {
+            AppError::Protocol(format!(
+                "No active connection handle available for session '{}'",
+                session_id
+            ))
         })?;
         let timeout_secs = u64::from(active.profile().connection_settings.timeout_seconds.max(5));
         let timeout_duration = Duration::from_secs(timeout_secs);
@@ -406,15 +563,22 @@ impl SessionManager {
         }
     }
 
-    async fn active_fs_adapter(&self) -> Result<Box<dyn RemoteFileSystem>, AppError> {
+    async fn active_fs_adapter_for(
+        &self,
+        session_id: Option<&str>,
+    ) -> Result<Box<dyn RemoteFileSystem>, AppError> {
         let guard = self.inner.read().await;
-        if guard.status != SessionStatus::Connected {
-            return Err(AppError::Protocol(
-                "No active connection established".to_string(),
-            ));
-        }
-        let active = guard.active.as_ref().ok_or_else(|| {
-            AppError::Protocol("No active connection handle available".to_string())
+        let target_sid = match session_id {
+            Some(sid) => sid,
+            None => guard.active_session_id.as_deref().ok_or_else(|| {
+                AppError::Protocol("No active connection established".to_string())
+            })?,
+        };
+        let active = guard.sessions.get(target_sid).ok_or_else(|| {
+            AppError::Protocol(format!(
+                "No active connection handle available for session '{}'",
+                target_sid
+            ))
         })?;
         match active {
             ActiveBackendConnection::Sftp(sftp_conn) => {
@@ -435,11 +599,12 @@ impl SessionManager {
         &self,
         parent_path: &str,
         dir_name: &str,
+        session_id: Option<&str>,
     ) -> Result<String, AppError> {
         let valid_name = validate_remote_entry_name(dir_name)?;
         let parent_norm = normalize_posix_path(parent_path.trim());
         let target = join_posix_path(&parent_norm, &valid_name);
-        let adapter = self.active_fs_adapter().await?;
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.create_directory(&target).await?;
         Ok(target)
     }
@@ -449,11 +614,12 @@ impl SessionManager {
         &self,
         parent_path: &str,
         file_name: &str,
+        session_id: Option<&str>,
     ) -> Result<String, AppError> {
         let valid_name = validate_remote_entry_name(file_name)?;
         let parent_norm = normalize_posix_path(parent_path.trim());
         let target = join_posix_path(&parent_norm, &valid_name);
-        let adapter = self.active_fs_adapter().await?;
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.create_file(&target).await?;
         Ok(target)
     }
@@ -463,6 +629,7 @@ impl SessionManager {
         &self,
         source_path: &str,
         new_name: &str,
+        session_id: Option<&str>,
     ) -> Result<String, AppError> {
         let valid_name = validate_remote_entry_name(new_name)?;
         let source_norm = normalize_posix_path(source_path.trim());
@@ -470,14 +637,18 @@ impl SessionManager {
             AppError::Validation("Cannot rename remote root directory '/'".to_string())
         })?;
         let target = join_posix_path(&parent, &valid_name);
-        let adapter = self.active_fs_adapter().await?;
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.rename(&source_norm, &target).await?;
         Ok(target)
     }
 
     /// Deletes a single remote file behind the `RemoteFileSystem` adapter.
-    pub async fn delete_remote_file(&self, path: &str) -> Result<(), AppError> {
-        let adapter = self.active_fs_adapter().await?;
+    pub async fn delete_remote_file(
+        &self,
+        path: &str,
+        session_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.delete_file(path).await
     }
 
@@ -486,8 +657,9 @@ impl SessionManager {
         &self,
         path: &str,
         recursive: bool,
+        session_id: Option<&str>,
     ) -> Result<(), AppError> {
-        let adapter = self.active_fs_adapter().await?;
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.delete_directory(path, recursive).await
     }
 
@@ -497,6 +669,7 @@ impl SessionManager {
         paths: Vec<String>,
         octal_mode: &str,
         recursive: bool,
+        session_id: Option<&str>,
     ) -> Result<(), AppError> {
         if paths.is_empty() {
             return Err(AppError::Validation(
@@ -504,13 +677,16 @@ impl SessionManager {
             ));
         }
         let perms: UnixPermissions = parse_octal_mode(octal_mode)?;
-        let adapter = self.active_fs_adapter().await?;
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter
             .capabilities()
             .verify_operation("set_permissions")
             .map_err(|e| AppError::Protocol(e.to_string()))?;
 
-        let ctx = self.active_transfer_context().await?;
+        let ctx = match session_id {
+            Some(sid) => self.transfer_context_for(sid).await?,
+            None => self.active_transfer_context().await?,
+        };
         match &ctx.client {
             TransferClient::Sftp(sftp) => {
                 let sftp_adapter = SftpFileSystemAdapter::new(
@@ -542,8 +718,9 @@ impl SessionManager {
         gid: Option<u32>,
         user_name: Option<String>,
         group_name: Option<String>,
+        session_id: Option<&str>,
     ) -> Result<(), AppError> {
-        let adapter = self.active_fs_adapter().await?;
+        let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter
             .capabilities()
             .verify_operation("set_owner_group")
@@ -551,13 +728,17 @@ impl SessionManager {
 
         let (resolved_uid, resolved_gid) = {
             let guard = self.inner.read().await;
-            if guard.status != SessionStatus::Connected {
-                return Err(AppError::Protocol(
-                    "No active connection established".to_string(),
-                ));
-            }
-            let active = guard.active.as_ref().ok_or_else(|| {
-                AppError::Protocol("No active connection handle available".to_string())
+            let target_sid = match session_id {
+                Some(sid) => sid,
+                None => guard.active_session_id.as_deref().ok_or_else(|| {
+                    AppError::Protocol("No active connection established".to_string())
+                })?,
+            };
+            let active = guard.sessions.get(target_sid).ok_or_else(|| {
+                AppError::Protocol(format!(
+                    "No active connection handle available for session '{}'",
+                    target_sid
+                ))
             })?;
 
             let ssh_handle = match active {
@@ -624,15 +805,20 @@ impl SessionManager {
         &self,
         uid: Option<u32>,
         gid: Option<u32>,
+        session_id: Option<&str>,
     ) -> Result<FileOwnership, AppError> {
         let guard = self.inner.read().await;
-        if guard.status != SessionStatus::Connected {
-            return Err(AppError::Protocol(
-                "No active connection established".to_string(),
-            ));
-        }
-        let active = guard.active.as_ref().ok_or_else(|| {
-            AppError::Protocol("No active connection handle available".to_string())
+        let target_sid = match session_id {
+            Some(sid) => sid,
+            None => guard.active_session_id.as_deref().ok_or_else(|| {
+                AppError::Protocol("No active connection established".to_string())
+            })?,
+        };
+        let active = guard.sessions.get(target_sid).ok_or_else(|| {
+            AppError::Protocol(format!(
+                "No active connection handle available for session '{}'",
+                target_sid
+            ))
         })?;
         match active {
             ActiveBackendConnection::Sftp(sftp) => {
@@ -753,5 +939,155 @@ mod tests {
             }
             other => panic!("Expected Protocol error for FTP, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_multi_session_state_and_disconnect_isolation() {
+        let manager = SessionManager::new();
+        assert_eq!(manager.session_count().await, 0);
+        assert!(manager.active_session_id().await.is_none());
+
+        // Test snapshot_for unknown returns Disconnected
+        let snap = manager.snapshot_for(Some("non-existent-tab")).await;
+        assert_eq!(snap.status, SessionStatus::Disconnected);
+
+        // Inject simulated tab statuses
+        {
+            let mut guard = manager.inner.write().await;
+            guard
+                .session_statuses
+                .insert("tab-1".to_string(), SessionStatus::Connected);
+            guard
+                .session_statuses
+                .insert("tab-2".to_string(), SessionStatus::Connected);
+            guard.active_session_id = Some("tab-1".to_string());
+            guard.status = SessionStatus::Connected;
+        }
+
+        assert_eq!(manager.active_session_id().await.as_deref(), Some("tab-1"));
+        assert_eq!(
+            manager.snapshot_for(Some("tab-1")).await.status,
+            SessionStatus::Connected
+        );
+        assert_eq!(
+            manager.snapshot_for(Some("tab-2")).await.status,
+            SessionStatus::Connected
+        );
+
+        // Disconnecting tab-1 isolates tab-2
+        let snap1 = manager.disconnect_session(Some("tab-1")).await.unwrap();
+        assert_eq!(snap1.status, SessionStatus::Disconnected);
+        assert_eq!(
+            manager.snapshot_for(Some("tab-2")).await.status,
+            SessionStatus::Connected
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_live_sessions_and_tab_disconnect_isolation() {
+        let test_host = "192.168.122.10";
+        let test_port = 22u16;
+
+        if tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::TcpStream::connect((test_host, test_port)),
+        )
+        .await
+        .is_err()
+        {
+            return;
+        }
+
+        let manager = SessionManager::new();
+
+        let profile_1 = ConnectionProfile::new(
+            "Tab 1 VM".to_string(),
+            ProtocolType::Sftp,
+            test_host.to_string(),
+            "ubuntu".to_string(),
+            crate::models::AuthMethod::PublicKey {
+                private_key_path: "~/.ssh/id_rsa".to_string(),
+                requires_passphrase: false,
+            },
+        );
+
+        let profile_2 = ConnectionProfile::new(
+            "Tab 2 VM".to_string(),
+            ProtocolType::Sftp,
+            test_host.to_string(),
+            "ubuntu".to_string(),
+            crate::models::AuthMethod::PublicKey {
+                private_key_path: "~/.ssh/id_rsa".to_string(),
+                requires_passphrase: false,
+            },
+        );
+
+        // Connect Session 1
+        let outcome_1 = manager
+            .connect_with_session_id(profile_1, None, false, None)
+            .await;
+        let sid_1 = match outcome_1 {
+            Ok(ConnectOutcome::Connected { session, .. }) => session.session_id.0,
+            _ => return,
+        };
+
+        // Connect Session 2 concurrently
+        let outcome_2 = manager
+            .connect_with_session_id(profile_2, None, false, None)
+            .await;
+        let sid_2 = match outcome_2 {
+            Ok(ConnectOutcome::Connected { session, .. }) => session.session_id.0,
+            _ => return,
+        };
+
+        assert_ne!(
+            sid_1, sid_2,
+            "Concurrent tabs must have distinct session IDs"
+        );
+        assert_eq!(manager.session_count().await, 2);
+        assert!(manager.has_session(&sid_1).await);
+        assert!(manager.has_session(&sid_2).await);
+
+        // Both sessions can list remote directory independently
+        let listing_1 = manager
+            .list_remote_directory(Some("/tmp".to_string()), false, Some(&sid_1))
+            .await;
+        assert!(listing_1.is_ok());
+
+        let listing_2 = manager
+            .list_remote_directory(Some("/etc".to_string()), false, Some(&sid_2))
+            .await;
+        assert!(listing_2.is_ok());
+
+        // Tab switching: set active session to sid_1
+        manager.set_active_session_id(&sid_1).await;
+        assert_eq!(
+            manager.active_session_id().await.as_deref(),
+            Some(sid_1.as_str())
+        );
+
+        // Disconnect Tab 1 ONLY
+        let snap_disc_1 = manager.disconnect_session(Some(&sid_1)).await.unwrap();
+        assert_eq!(snap_disc_1.status, SessionStatus::Disconnected);
+
+        // Tab 1 is gone, but Tab 2 remains actively connected!
+        assert!(!manager.has_session(&sid_1).await);
+        assert!(manager.has_session(&sid_2).await);
+        assert_eq!(manager.session_count().await, 1);
+        assert_eq!(
+            manager.snapshot_for(Some(&sid_2)).await.status,
+            SessionStatus::Connected
+        );
+
+        // Tab 2 can still execute remote commands
+        let listing_2_again = manager
+            .list_remote_directory(Some("/tmp".to_string()), false, Some(&sid_2))
+            .await;
+        assert!(listing_2_again.is_ok());
+
+        // Now disconnect Tab 2
+        let snap_disc_2 = manager.disconnect_session(Some(&sid_2)).await.unwrap();
+        assert_eq!(snap_disc_2.status, SessionStatus::Disconnected);
+        assert_eq!(manager.session_count().await, 0);
     }
 }

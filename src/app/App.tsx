@@ -17,7 +17,7 @@ import { IpcClient } from "../services/ipc";
 import { SystemInfo } from "../types/ipc";
 import { ConnectionProfile } from "../types/connection";
 import { RemoteEditSession, RemoteEditUploadMode } from "../types/desktop";
-import { ConnectOutcome, SessionStateSnapshot } from "../types/session";
+import { ConnectOutcome } from "../types/session";
 import {
   ConflictDecision,
   TransferConflictPrompt,
@@ -25,6 +25,9 @@ import {
   TransferProgressEvent,
 } from "../types/transfer";
 import { InternalDragPayload } from "../utils/dragDrop";
+
+import { RemoteTabState } from "../types/tabs";
+import { createInitialRemoteNavState } from "../utils/remoteNavigation";
 
 type HostKeyChallenge = Extract<ConnectOutcome, { outcome: "HostKeyUnknown" | "HostKeyChanged" }>;
 
@@ -105,13 +108,35 @@ export function App() {
   const [queueHeight, setQueueHeight] = useState<number>(112);
   const [queueCollapsed, setQueueCollapsed] = useState<boolean>(false);
 
-  // SFTP Session lifecycle state
-  const [sessionState, setSessionState] = useState<SessionStateSnapshot>({
-    status: { status: "Disconnected" },
-    session: null,
-    trusted_host_key: null,
-  });
-  const [connectionError, setConnectionError] = useState<string | null>(null);
+  // Multiple connection tabs state
+  const tabCounterRef = useRef<number>(1);
+  const [tabs, setTabs] = useState<RemoteTabState[]>([
+    {
+      id: "tab-1",
+      title: "Remote",
+      sessionState: {
+        status: { status: "Disconnected" },
+        session: null,
+        trusted_host_key: null,
+      },
+      connectionError: null,
+      currentPath: "",
+      parentPath: null,
+      homePath: null,
+      entries: [],
+      selectedPaths: new Set(),
+      focusedPath: undefined,
+      navHistory: createInitialRemoteNavState(),
+      savedPaths: [],
+      canReconnect: false,
+    },
+  ]);
+  const [activeTabId, setActiveTabId] = useState<string>("tab-1");
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+  const sessionState = activeTab.sessionState;
+  const connectionError = activeTab.connectionError;
+  const remoteCurrentPath = activeTab.currentPath;
+
   const [hostKeyChallenge, setHostKeyChallenge] = useState<HostKeyChallenge | null>(null);
   const [isTrustingHostKey, setIsTrustingHostKey] = useState(false);
   const [hostKeyModalError, setHostKeyModalError] = useState<string | null>(null);
@@ -119,7 +144,6 @@ export function App() {
 
   // Current directory paths for transfers
   const [localCurrentPath, setLocalCurrentPath] = useState<string>("");
-  const [remoteCurrentPath, setRemoteCurrentPath] = useState<string>("");
   const [localRefreshTrigger, setLocalRefreshTrigger] = useState<number>(0);
   const [remoteRefreshTrigger, setRemoteRefreshTrigger] = useState<number>(0);
 
@@ -129,6 +153,116 @@ export function App() {
   const [activeDrag, setActiveDrag] = useState<InternalDragPayload | null>(null);
   const [remoteEditSessions, setRemoteEditSessions] = useState<RemoteEditSession[]>([]);
   const [remoteEditUploadMode, setRemoteEditUploadMode] = useState<RemoteEditUploadMode>("auto");
+
+  const handleUpdateTab = useCallback(
+    (
+      tabId: string,
+      updater: Partial<RemoteTabState> | ((prev: RemoteTabState) => RemoteTabState)
+    ) => {
+      setTabs((prev) =>
+        prev.map((t) => {
+          if (t.id !== tabId) return t;
+          if (typeof updater === "function") {
+            return updater(t);
+          }
+          return { ...t, ...updater };
+        })
+      );
+    },
+    []
+  );
+
+  const handleAddTab = useCallback(() => {
+    tabCounterRef.current += 1;
+    const newId = `tab-${Date.now()}-${tabCounterRef.current}`;
+    const newTab: RemoteTabState = {
+      id: newId,
+      title: `Remote ${tabCounterRef.current}`,
+      sessionState: {
+        status: { status: "Disconnected" },
+        session: null,
+        trusted_host_key: null,
+      },
+      connectionError: null,
+      currentPath: "",
+      parentPath: null,
+      homePath: null,
+      entries: [],
+      selectedPaths: new Set(),
+      focusedPath: undefined,
+      navHistory: createInitialRemoteNavState(),
+      savedPaths: [],
+      canReconnect: false,
+    };
+    setTabs((prev) => [...prev, newTab]);
+    setActiveTabId(newId);
+  }, []);
+
+  const handleSelectTab = useCallback((tabId: string) => {
+    setActiveTabId(tabId);
+    setTabs((currentTabs) => {
+      const target = currentTabs.find((t) => t.id === tabId);
+      if (target?.sessionState.session?.session_id) {
+        IpcClient.setActiveSession(target.sessionState.session.session_id).catch(() => {});
+      }
+      return currentTabs;
+    });
+  }, []);
+
+  const handleCloseTab = useCallback(
+    async (tabId: string) => {
+      const target = tabs.find((t) => t.id === tabId);
+      if (target?.sessionState.session?.session_id) {
+        try {
+          await IpcClient.disconnectSftpSession(target.sessionState.session.session_id);
+        } catch {
+          // ignore
+        }
+      }
+
+      setTabs((prev) => {
+        if (prev.length <= 1) {
+          tabCounterRef.current += 1;
+          return [
+            {
+              id: `tab-${Date.now()}-${tabCounterRef.current}`,
+              title: "Remote",
+              sessionState: {
+                status: { status: "Disconnected" },
+                session: null,
+                trusted_host_key: null,
+              },
+              connectionError: null,
+              currentPath: "",
+              parentPath: null,
+              homePath: null,
+              entries: [],
+              selectedPaths: new Set(),
+              focusedPath: undefined,
+              navHistory: createInitialRemoteNavState(),
+              savedPaths: [],
+              canReconnect: false,
+            },
+          ];
+        }
+        return prev.filter((t) => t.id !== tabId);
+      });
+
+      setActiveTabId((currentActiveId) => {
+        if (currentActiveId === tabId) {
+          const idx = tabs.findIndex((t) => t.id === tabId);
+          const nextIdx = idx > 0 ? idx - 1 : 1;
+          const nextTab = tabs[nextIdx] ?? tabs[0];
+          if (nextTab?.sessionState.session?.session_id) {
+            IpcClient.setActiveSession(nextTab.sessionState.session.session_id).catch(() => {});
+          }
+          return nextTab?.id ?? "tab-1";
+        }
+        return currentActiveId;
+      });
+    },
+    [tabs]
+  );
 
   const upsertRemoteEditSession = useCallback((session: RemoteEditSession) => {
     let didAutoUpload = false;
@@ -163,9 +297,15 @@ export function App() {
         setSystemInfo(info);
 
         const currentSession = await IpcClient.getSessionState();
-        setSessionState(currentSession);
-        if (currentSession.session?.current_remote_path) {
-          setRemoteCurrentPath(currentSession.session.current_remote_path);
+        if (currentSession.status.status === "Connected" && currentSession.session) {
+          handleUpdateTab("tab-1", {
+            title: currentSession.session.host || "Remote",
+            sessionState: currentSession,
+            currentPath: currentSession.session.current_remote_path || "",
+            homePath: currentSession.session.home_remote_path || null,
+            lastConnectedProfileId: currentSession.session.profile_id,
+            canReconnect: true,
+          });
         }
         if (currentSession.session?.profile_id) {
           setSelectedProfileId(currentSession.session.profile_id);
@@ -321,81 +461,116 @@ export function App() {
   }, []);
 
   // Connect to a profile
-  const handleConnectProfile = useCallback(async (profile: ConnectionProfile, secret?: string) => {
-    setConnectionError(null);
-    setHostKeyChallenge(null);
-    setHostKeyModalError(null);
-    lastConnectedProfileIdRef.current = profile.id;
-    setSelectedProfileId(profile.id);
+  const handleConnectProfile = useCallback(
+    async (profile: ConnectionProfile, secret?: string) => {
+      setHostKeyChallenge(null);
+      setHostKeyModalError(null);
+      lastConnectedProfileIdRef.current = profile.id;
+      setSelectedProfileId(profile.id);
 
-    setSessionState({
-      status: { status: "Connecting" },
-      session: null,
-      trusted_host_key: null,
-    });
+      const targetTabId = activeTabId;
+      const targetSessionId = activeTab.sessionState.session?.session_id;
 
-    try {
-      const outcome = await IpcClient.connectSftpSession(profile.id, secret);
-
-      if (outcome.outcome === "Connected") {
-        setSessionState({
-          status: { status: "Connected" },
-          session: outcome.session,
-          trusted_host_key: outcome.trusted_host_key,
-        });
-        setSiteManagerOpen(false);
-      } else if (outcome.outcome === "HostKeyUnknown" || outcome.outcome === "HostKeyChanged") {
-        setHostKeyChallenge(outcome);
-        setSessionState({
-          status: { status: "Disconnected" },
+      handleUpdateTab(targetTabId, {
+        title: profile.name || profile.host,
+        sessionState: {
+          status: { status: "Connecting" },
           session: null,
           trusted_host_key: null,
-        });
-        setSiteManagerOpen(false);
-      }
-    } catch (err) {
-      const message =
-        typeof err === "object" && err !== null && "message" in err
-          ? String((err as { message: unknown }).message)
-          : String(err);
-      setConnectionError(message);
-      setSessionState({
-        status: {
-          status: "Failed",
-          details: { error_message: message },
         },
-        session: null,
-        trusted_host_key: null,
+        connectionError: null,
+        lastConnectedProfileId: profile.id,
+        canReconnect: true,
       });
-    }
-  }, []);
+
+      try {
+        const outcome = await IpcClient.connectSftpSession(
+          profile.id,
+          secret,
+          targetSessionId
+        );
+
+        if (outcome.outcome === "Connected") {
+          handleUpdateTab(targetTabId, {
+            title: profile.name || outcome.session.host,
+            sessionState: {
+              status: { status: "Connected" },
+              session: outcome.session,
+              trusted_host_key: outcome.trusted_host_key,
+            },
+            connectionError: null,
+            canReconnect: true,
+          });
+          setSiteManagerOpen(false);
+        } else if (outcome.outcome === "HostKeyUnknown" || outcome.outcome === "HostKeyChanged") {
+          setHostKeyChallenge(outcome);
+          handleUpdateTab(targetTabId, {
+            sessionState: {
+              status: { status: "Disconnected" },
+              session: null,
+              trusted_host_key: null,
+            },
+            connectionError: null,
+          });
+          setSiteManagerOpen(false);
+        }
+      } catch (err) {
+        const message =
+          typeof err === "object" && err !== null && "message" in err
+            ? String((err as { message: unknown }).message)
+            : String(err);
+        handleUpdateTab(targetTabId, {
+          sessionState: {
+            status: {
+              status: "Failed",
+              details: { error_message: message },
+            },
+            session: null,
+            trusted_host_key: null,
+          },
+          connectionError: message,
+        });
+      }
+    },
+    [activeTabId, activeTab, handleUpdateTab]
+  );
 
   // Reconnect active or last session
   const handleReconnect = useCallback(async () => {
-    setConnectionError(null);
+    const targetTabId = activeTabId;
+    const sid = activeTab.sessionState.session?.session_id;
     setHostKeyChallenge(null);
     setHostKeyModalError(null);
 
-    setSessionState((prev) => ({
+    handleUpdateTab(targetTabId, (prev) => ({
       ...prev,
-      status: { status: "Reconnecting" },
+      sessionState: {
+        ...prev.sessionState,
+        status: { status: "Reconnecting" },
+      },
+      connectionError: null,
     }));
 
     try {
-      const outcome = await IpcClient.reconnectSftpSession();
+      const outcome = await IpcClient.reconnectSftpSession(undefined, sid);
 
       if (outcome.outcome === "Connected") {
-        setSessionState({
-          status: { status: "Connected" },
-          session: outcome.session,
-          trusted_host_key: outcome.trusted_host_key,
+        handleUpdateTab(targetTabId, {
+          sessionState: {
+            status: { status: "Connected" },
+            session: outcome.session,
+            trusted_host_key: outcome.trusted_host_key,
+          },
+          connectionError: null,
         });
       } else if (outcome.outcome === "HostKeyUnknown" || outcome.outcome === "HostKeyChanged") {
         setHostKeyChallenge(outcome);
-        setSessionState({
-          status: { status: "Disconnected" },
-          session: null,
-          trusted_host_key: null,
+        handleUpdateTab(targetTabId, {
+          sessionState: {
+            status: { status: "Disconnected" },
+            session: null,
+            trusted_host_key: null,
+          },
         });
       }
     } catch (err) {
@@ -403,29 +578,40 @@ export function App() {
         typeof err === "object" && err !== null && "message" in err
           ? String((err as { message: unknown }).message)
           : String(err);
-      setConnectionError(message);
-      setSessionState({
-        status: {
-          status: "Failed",
-          details: { error_message: message },
+      handleUpdateTab(targetTabId, {
+        sessionState: {
+          status: {
+            status: "Failed",
+            details: { error_message: message },
+          },
+          session: null,
+          trusted_host_key: null,
         },
-        session: null,
-        trusted_host_key: null,
+        connectionError: message,
       });
     }
-  }, []);
+  }, [activeTabId, activeTab, handleUpdateTab]);
 
   // Disconnect active session or cancel connecting
   const handleDisconnect = useCallback(async () => {
+    const targetTabId = activeTabId;
+    const sid = activeTab.sessionState.session?.session_id;
     try {
-      const snapshot = await IpcClient.disconnectSftpSession();
-      setSessionState(snapshot);
-      setConnectionError(null);
+      const snapshot = await IpcClient.disconnectSftpSession(sid);
+      handleUpdateTab(targetTabId, {
+        sessionState: snapshot,
+        connectionError: null,
+        entries: [],
+        currentPath: "",
+        parentPath: null,
+        selectedPaths: new Set(),
+        focusedPath: undefined,
+      });
       setHostKeyChallenge(null);
     } catch (err) {
       console.error("Disconnect error:", err);
     }
-  }, []);
+  }, [activeTabId, activeTab, handleUpdateTab]);
 
   // User approved an unknown host key
   const handleApproveUnknownKey = useCallback(
@@ -446,17 +632,27 @@ export function App() {
         // Retry connection with the profile that was pending
         const profileId = lastConnectedProfileIdRef.current;
         if (profileId) {
-          setSessionState({
-            status: { status: "Connecting" },
-            session: null,
-            trusted_host_key: null,
+          handleUpdateTab(activeTabId, {
+            sessionState: {
+              status: { status: "Connecting" },
+              session: null,
+              trusted_host_key: null,
+            },
           });
-          const outcome = await IpcClient.connectSftpSession(profileId);
+          const outcome = await IpcClient.connectSftpSession(
+            profileId,
+            undefined,
+            activeTab.sessionState.session?.session_id
+          );
           if (outcome.outcome === "Connected") {
-            setSessionState({
-              status: { status: "Connected" },
-              session: outcome.session,
-              trusted_host_key: outcome.trusted_host_key,
+            handleUpdateTab(activeTabId, {
+              title: outcome.session.host,
+              sessionState: {
+                status: { status: "Connected" },
+                session: outcome.session,
+                trusted_host_key: outcome.trusted_host_key,
+              },
+              connectionError: null,
             });
           }
         }
@@ -470,7 +666,7 @@ export function App() {
         setIsTrustingHostKey(false);
       }
     },
-    []
+    [activeTabId, activeTab, handleUpdateTab]
   );
 
   const isConnected = sessionState.status.status === "Connected" && Boolean(sessionState.session);
@@ -515,12 +711,13 @@ export function App() {
   );
 
   const handleUpload = useCallback(
-    async (localPaths: string[], targetRemoteDir?: string) => {
+    async (localPaths: string[], targetRemoteDir?: string, sessionIdOverride?: string) => {
+      const sid = sessionIdOverride || activeTab.sessionState.session?.session_id;
       const targetDir =
         targetRemoteDir || remoteCurrentPath || sessionState.session?.current_remote_path;
       if (!targetDir || localPaths.length === 0) return;
       try {
-        const jobs = await IpcClient.enqueueUploads(localPaths, targetDir, "ask");
+        const jobs = await IpcClient.enqueueUploads(localPaths, targetDir, "ask", sid);
         setTransferJobs((prev) => {
           const existingIds = new Set(prev.map((j) => j.id));
           const added = jobs.filter((j) => !existingIds.has(j.id));
@@ -533,15 +730,16 @@ export function App() {
         console.error("Upload enqueue error:", err);
       }
     },
-    [remoteCurrentPath, sessionState.session?.current_remote_path]
+    [remoteCurrentPath, sessionState.session?.current_remote_path, activeTab]
   );
 
   const handleDownload = useCallback(
-    async (remotePaths: string[], targetLocalDir?: string) => {
+    async (remotePaths: string[], targetLocalDir?: string, sessionIdOverride?: string) => {
+      const sid = sessionIdOverride || activeTab.sessionState.session?.session_id;
       const targetDir = targetLocalDir || localCurrentPath;
       if (!targetDir || remotePaths.length === 0) return;
       try {
-        const jobs = await IpcClient.enqueueDownloads(remotePaths, targetDir, "ask");
+        const jobs = await IpcClient.enqueueDownloads(remotePaths, targetDir, "ask", sid);
         setTransferJobs((prev) => {
           const existingIds = new Set(prev.map((j) => j.id));
           const added = jobs.filter((j) => !existingIds.has(j.id));
@@ -554,7 +752,7 @@ export function App() {
         console.error("Download enqueue error:", err);
       }
     },
-    [localCurrentPath]
+    [localCurrentPath, activeTab]
   );
 
   const handleCancelTransfer = useCallback(async (jobId: string) => {
@@ -786,6 +984,12 @@ export function App() {
             className="h-full flex flex-col min-w-[280px]"
           >
             <RemotePane
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onSelectTab={handleSelectTab}
+              onCloseTab={handleCloseTab}
+              onAddTab={handleAddTab}
+              onUpdateTab={handleUpdateTab}
               sessionState={sessionState}
               connectionError={connectionError}
               isActivePane={activePane === "remote"}
@@ -793,7 +997,9 @@ export function App() {
               onConnect={() => setSiteManagerOpen(true)}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
-              onDirectoryChange={setRemoteCurrentPath}
+              onDirectoryChange={(p) => {
+                handleUpdateTab(activeTabId, { currentPath: p });
+              }}
               onDownload={handleDownload}
               onDropUpload={handleUpload}
               activeDrag={activeDrag}

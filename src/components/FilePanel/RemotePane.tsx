@@ -43,16 +43,27 @@ import {
   stepRemoteHistoryBack,
   stepRemoteHistoryForward,
 } from "../../utils/remoteNavigation";
+import { RemoteTabState } from "../../types/tabs";
+import { RemoteTabBar } from "./RemoteTabBar";
 
-interface RemotePaneProps {
+export interface RemotePaneProps {
+  tabs?: RemoteTabState[];
+  activeTabId?: string;
+  onSelectTab?: (tabId: string) => void;
+  onCloseTab?: (tabId: string) => void;
+  onAddTab?: () => void;
+  onUpdateTab?: (
+    tabId: string,
+    updater: Partial<RemoteTabState> | ((prev: RemoteTabState) => RemoteTabState)
+  ) => void;
   sessionState?: SessionStateSnapshot;
   connectionError?: string | null;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onReconnect?: () => void;
   onDirectoryChange?: (path: string) => void;
-  onDownload?: (paths: string[], targetLocalDir?: string) => void;
-  onDropUpload?: (localPaths: string[], targetRemoteDir: string) => void;
+  onDownload?: (paths: string[], targetLocalDir?: string, sessionId?: string) => void;
+  onDropUpload?: (localPaths: string[], targetRemoteDir: string, sessionId?: string) => void;
   activeDrag?: InternalDragPayload | null;
   onInternalDragStart?: (payload: InternalDragPayload) => void;
   onInternalDragEnd?: () => void;
@@ -92,6 +103,12 @@ function classifyRemoteError(err: unknown, targetPath?: string): RemoteDirectory
 }
 
 export const RemotePane: React.FC<RemotePaneProps> = ({
+  tabs,
+  activeTabId,
+  onSelectTab,
+  onCloseTab,
+  onAddTab,
+  onUpdateTab,
   sessionState = DEFAULT_SESSION_STATE,
   connectionError = null,
   onConnect,
@@ -108,9 +125,17 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   refreshTrigger = 0,
   onRemoteEditOpened,
 }) => {
-  const statusKind = sessionState.status.status;
-  const activeSession = statusKind === "Connected" ? sessionState.session : null;
-  const trustedHostKey = sessionState.trusted_host_key;
+  const isExternalTabs = Boolean(tabs && tabs.length > 0 && activeTabId);
+  const currentTab = isExternalTabs
+    ? (tabs!.find((t) => t.id === activeTabId) ?? tabs![0])
+    : null;
+
+  const effectiveSessionState = currentTab ? currentTab.sessionState : sessionState;
+  const effectiveConnectionError = currentTab ? currentTab.connectionError : connectionError;
+
+  const statusKind = effectiveSessionState.status.status;
+  const activeSession = statusKind === "Connected" ? effectiveSessionState.session : null;
+  const trustedHostKey = effectiveSessionState.trusted_host_key;
 
   const isConnecting = statusKind === "Connecting" || statusKind === "Reconnecting";
   const isFailed = statusKind === "Failed";
@@ -120,17 +145,29 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     ? (activeSession.profile_id ?? activeSession.session_id)
     : null;
 
-  // Per-connection navigation history, sort, and hidden-file preferences
+  // Internal state fallback for standalone / non-tab mode
   const [navByConnection, setNavByConnection] = useState<Record<string, RemoteNavHistoryState>>({});
-
-  const [currentPath, setCurrentPath] = useState<string>("");
-  const [parentPath, setParentPath] = useState<string | null>(null);
-  const [homePath, setHomePath] = useState<string | null>(null);
-  const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  const [focusedPath, setFocusedPath] = useState<string | undefined>();
+  const [internalCurrentPath, setInternalCurrentPath] = useState<string>("");
+  const [internalParentPath, setInternalParentPath] = useState<string | null>(null);
+  const [internalHomePath, setInternalHomePath] = useState<string | null>(null);
+  const [internalEntries, setInternalEntries] = useState<FileEntry[]>([]);
+  const [internalSelectedPaths, setInternalSelectedPaths] = useState<Set<string>>(new Set());
+  const [internalFocusedPath, setInternalFocusedPath] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [remoteError, setRemoteError] = useState<RemoteDirectoryError | null>(null);
+
+  // Effective state derived from activeTab when tabs are provided, otherwise internal state:
+  const currentPath = currentTab ? currentTab.currentPath : internalCurrentPath;
+  const parentPath = currentTab ? currentTab.parentPath : internalParentPath;
+  const homePath = currentTab ? currentTab.homePath : internalHomePath;
+  const entries = currentTab ? currentTab.entries : internalEntries;
+  const selectedPaths = currentTab ? currentTab.selectedPaths : internalSelectedPaths;
+  const focusedPath = currentTab ? currentTab.focusedPath : internalFocusedPath;
+  const currentNav: RemoteNavHistoryState = currentTab
+    ? currentTab.navHistory
+    : connectionKey
+      ? (navByConnection[connectionKey] ?? createInitialRemoteNavState())
+      : createInitialRemoteNavState();
 
   // Remote file operation dialogs
   const [createDirOpen, setCreateDirOpen] = useState(false);
@@ -151,11 +188,6 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
   const loadedSessionIdRef = useRef<string | null>(null);
   const requestSeqRef = useRef<number>(0);
-
-  const currentNav: RemoteNavHistoryState = useMemo(() => {
-    if (!connectionKey) return createInitialRemoteNavState();
-    return navByConnection[connectionKey] ?? createInitialRemoteNavState();
-  }, [connectionKey, navByConnection]);
 
   const updateCurrentNav = useCallback(
     (updater: (prev: RemoteNavHistoryState) => RemoteNavHistoryState) => {
@@ -187,22 +219,43 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       setRemoteError(null);
 
       try {
-        const listing = await IpcClient.listRemoteDirectory(targetPath, effectiveHidden);
+        const listing =
+          isExternalTabs && activeSession.session_id
+            ? await IpcClient.listRemoteDirectory(
+                targetPath,
+                effectiveHidden,
+                activeSession.session_id
+              )
+            : await IpcClient.listRemoteDirectory(targetPath, effectiveHidden);
         if (seq !== requestSeqRef.current) return;
 
-        setCurrentPath(listing.current_path);
-        setParentPath(listing.parent_path ?? null);
-        if (listing.home_path) {
-          setHomePath(listing.home_path);
+        if (isExternalTabs && currentTab && onUpdateTab) {
+          const newNav = recordHistory
+            ? pushRemoteHistory(currentTab.navHistory, listing.current_path)
+            : currentTab.navHistory;
+          onUpdateTab(currentTab.id, {
+            currentPath: listing.current_path,
+            parentPath: listing.parent_path ?? null,
+            homePath: listing.home_path ?? currentTab.homePath,
+            entries: listing.entries,
+            selectedPaths: new Set(),
+            focusedPath: undefined,
+            navHistory: newNav,
+          });
+        } else {
+          setInternalCurrentPath(listing.current_path);
+          setInternalParentPath(listing.parent_path ?? null);
+          if (listing.home_path) {
+            setInternalHomePath(listing.home_path);
+          }
+          setInternalEntries(listing.entries);
+          setInternalSelectedPaths(new Set());
+          setInternalFocusedPath(undefined);
+          if (recordHistory) {
+            updateCurrentNav((prev) => pushRemoteHistory(prev, listing.current_path));
+          }
         }
-        setEntries(listing.entries);
-        setSelectedPaths(new Set());
-        setFocusedPath(undefined);
         onDirectoryChange?.(listing.current_path);
-
-        if (recordHistory) {
-          updateCurrentNav((prev) => pushRemoteHistory(prev, listing.current_path));
-        }
       } catch (err) {
         if (seq !== requestSeqRef.current) return;
         setRemoteError(classifyRemoteError(err, targetPath));
@@ -212,7 +265,16 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         }
       }
     },
-    [isConnected, activeSession, currentNav.showHidden, updateCurrentNav, onDirectoryChange]
+    [
+      isConnected,
+      activeSession,
+      currentNav.showHidden,
+      isExternalTabs,
+      currentTab,
+      onUpdateTab,
+      updateCurrentNav,
+      onDirectoryChange,
+    ]
   );
 
   // Automatically load initial/restored directory when a session becomes Connected
@@ -220,32 +282,41 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     if (isConnected && activeSession) {
       if (loadedSessionIdRef.current !== activeSession.session_id) {
         loadedSessionIdRef.current = activeSession.session_id;
-        setCurrentPath(activeSession.current_remote_path);
-        setHomePath(activeSession.home_remote_path ?? null);
-        setEntries([]);
-        setSelectedPaths(new Set());
-        setFocusedPath(undefined);
-        setRemoteError(null);
-        if (activeSession.capabilities.can_list_directory) {
-          loadDirectory(activeSession.current_remote_path, true);
+        if (!isExternalTabs) {
+          setInternalCurrentPath(activeSession.current_remote_path);
+          setInternalHomePath(activeSession.home_remote_path ?? null);
+          setInternalEntries([]);
+          setInternalSelectedPaths(new Set());
+          setInternalFocusedPath(undefined);
+          setRemoteError(null);
+          if (activeSession.capabilities.can_list_directory) {
+            loadDirectory(activeSession.current_remote_path, true);
+          }
+        } else {
+          const initialPath = currentTab?.currentPath || activeSession.current_remote_path;
+          if (activeSession.capabilities.can_list_directory && (currentTab?.entries.length ?? 0) === 0) {
+            loadDirectory(initialPath, true);
+          }
         }
       }
     } else {
       loadedSessionIdRef.current = null;
       requestSeqRef.current += 1;
-      setEntries([]);
-      setSelectedPaths(new Set());
-      setFocusedPath(undefined);
+      if (!isExternalTabs) {
+        setInternalEntries([]);
+        setInternalSelectedPaths(new Set());
+        setInternalFocusedPath(undefined);
+        if (statusKind === "Disconnected") {
+          setInternalCurrentPath("");
+          setInternalParentPath(null);
+          setInternalHomePath(null);
+        }
+      }
       setRemoteError(null);
       setIsLoading(false);
-      if (statusKind === "Disconnected") {
-        setCurrentPath("");
-        setParentPath(null);
-        setHomePath(null);
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeSession?.session_id, statusKind]);
+  }, [isConnected, activeSession?.session_id, statusKind, currentTab?.id]);
 
   // Reload remote directory when uploads complete
   useEffect(() => {
@@ -263,7 +334,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   // Navigation handlers
   const handleNavigate = (targetPath: string) => {
     if (activeSession && !activeSession.capabilities.can_list_directory) {
-      setCurrentPath(targetPath);
+      if (isExternalTabs && currentTab && onUpdateTab) {
+        onUpdateTab(currentTab.id, { currentPath: targetPath });
+      } else {
+        setInternalCurrentPath(targetPath);
+      }
       onDirectoryChange?.(targetPath);
       return;
     }
@@ -271,19 +346,25 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   };
 
   const handleBack = () => {
-    if (!connectionKey) return;
     const { state: nextState, targetPath } = stepRemoteHistoryBack(currentNav);
     if (targetPath) {
-      updateCurrentNav(() => nextState);
+      if (isExternalTabs && currentTab && onUpdateTab) {
+        onUpdateTab(currentTab.id, { navHistory: nextState });
+      } else {
+        updateCurrentNav(() => nextState);
+      }
       loadDirectory(targetPath, false);
     }
   };
 
   const handleForward = () => {
-    if (!connectionKey) return;
     const { state: nextState, targetPath } = stepRemoteHistoryForward(currentNav);
     if (targetPath) {
-      updateCurrentNav(() => nextState);
+      if (isExternalTabs && currentTab && onUpdateTab) {
+        onUpdateTab(currentTab.id, { navHistory: nextState });
+      } else {
+        updateCurrentNav(() => nextState);
+      }
       loadDirectory(targetPath, false);
     }
   };
@@ -313,19 +394,38 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
   const handleToggleHidden = () => {
     const nextHidden = !currentNav.showHidden;
-    updateCurrentNav((prev) => ({ ...prev, showHidden: nextHidden }));
-    if (currentPath) {
-      loadDirectory(currentPath, false, nextHidden);
+    if (isExternalTabs && currentTab && onUpdateTab) {
+      onUpdateTab(currentTab.id, (prev) => ({
+        ...prev,
+        navHistory: { ...prev.navHistory, showHidden: nextHidden },
+      }));
+    } else {
+      updateCurrentNav((prev) => ({ ...prev, showHidden: nextHidden }));
+    }
+    const target = currentPath || activeSession?.current_remote_path;
+    if (target) {
+      loadDirectory(target, false, nextHidden);
     }
   };
 
   const handleSortChange = (col: SortColumn) => {
-    updateCurrentNav((prev) => {
-      if (prev.sortBy === col) {
-        return { ...prev, sortDirection: prev.sortDirection === "asc" ? "desc" : "asc" };
-      }
-      return { ...prev, sortBy: col, sortDirection: "asc" };
-    });
+    if (isExternalTabs && currentTab && onUpdateTab) {
+      onUpdateTab(currentTab.id, (prev) => {
+        const prevNav = prev.navHistory;
+        const nextDir = prevNav.sortBy === col && prevNav.sortDirection === "asc" ? "desc" : "asc";
+        return {
+          ...prev,
+          navHistory: { ...prevNav, sortBy: col, sortDirection: nextDir },
+        };
+      });
+    } else {
+      updateCurrentNav((prev) => {
+        if (prev.sortBy === col) {
+          return { ...prev, sortDirection: prev.sortDirection === "asc" ? "desc" : "asc" };
+        }
+        return { ...prev, sortBy: col, sortDirection: "asc" };
+      });
+    }
   };
 
   const handleOpenEntry = async (entry: FileEntry) => {
@@ -336,7 +436,10 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
     if (isSymlink(entry.file_type)) {
       try {
-        const targetIsDir = await IpcClient.checkRemotePathIsDir(entry.path);
+        const targetIsDir =
+          isExternalTabs && activeSession?.session_id
+            ? await IpcClient.checkRemotePathIsDir(entry.path, activeSession.session_id)
+            : await IpcClient.checkRemotePathIsDir(entry.path);
         if (targetIsDir) {
           loadDirectory(entry.path, true);
           return;
@@ -382,7 +485,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     for (const entry of entries) {
       if (selectedPaths.has(entry.path)) {
         selectedCount++;
-        if (!isDirectory(entry.file_type) && entry.metadata.size) {
+        if (!isDirectory(entry.file_type) && entry.metadata?.size) {
           selectedBytes += entry.metadata.size;
         }
       }
@@ -392,8 +495,10 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   }, [entries, selectedPaths]);
 
   const errorMessage =
-    connectionError ||
-    (sessionState.status.status === "Failed" ? sessionState.status.details.error_message : null);
+    effectiveConnectionError ||
+    (effectiveSessionState.status.status === "Failed"
+      ? effectiveSessionState.status.details.error_message
+      : null);
 
   const canGoBack = currentNav.historyIndex > 0;
   const canGoForward = currentNav.historyIndex < currentNav.history.length - 1;
@@ -403,10 +508,17 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       ? currentPath || activeSession.current_remote_path
       : "sftp://[not connected]/";
 
-  const handleSelectionChange = useCallback((paths: Set<string>, focus?: string) => {
-    setSelectedPaths(paths);
-    setFocusedPath(focus);
-  }, []);
+  const handleSelectionChange = useCallback(
+    (paths: Set<string>, focus?: string) => {
+      if (isExternalTabs && currentTab && onUpdateTab) {
+        onUpdateTab(currentTab.id, { selectedPaths: paths, focusedPath: focus });
+      } else {
+        setInternalSelectedPaths(paths);
+        setInternalFocusedPath(focus);
+      }
+    },
+    [isExternalTabs, currentTab, onUpdateTab]
+  );
 
   const selectedEntries = useMemo(
     () => entries.filter((e) => selectedPaths.has(e.path)),
@@ -467,7 +579,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     setIsOperating(true);
     setDialogError(null);
     try {
-      await IpcClient.createRemoteDirectory(displayedPath, dirName);
+      if (isExternalTabs && activeSession?.session_id) {
+        await IpcClient.createRemoteDirectory(displayedPath, dirName, activeSession.session_id);
+      } else {
+        await IpcClient.createRemoteDirectory(displayedPath, dirName);
+      }
       setCreateDirOpen(false);
       await loadDirectory(displayedPath, false);
     } catch (err: unknown) {
@@ -481,7 +597,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     setIsOperating(true);
     setDialogError(null);
     try {
-      await IpcClient.createRemoteFile(displayedPath, fileName);
+      if (isExternalTabs && activeSession?.session_id) {
+        await IpcClient.createRemoteFile(displayedPath, fileName, activeSession.session_id);
+      } else {
+        await IpcClient.createRemoteFile(displayedPath, fileName);
+      }
       setCreateFileOpen(false);
       await loadDirectory(displayedPath, false);
     } catch (err: unknown) {
@@ -496,7 +616,15 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     setIsOperating(true);
     setDialogError(null);
     try {
-      await IpcClient.renameRemoteEntry(singleSelectedEntry.path, newName);
+      if (isExternalTabs && activeSession?.session_id) {
+        await IpcClient.renameRemoteEntry(
+          singleSelectedEntry.path,
+          newName,
+          activeSession.session_id
+        );
+      } else {
+        await IpcClient.renameRemoteEntry(singleSelectedEntry.path, newName);
+      }
       setRenameOpen(false);
       await loadDirectory(displayedPath, false);
     } catch (err: unknown) {
@@ -518,7 +646,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       for (const entry of selectedEntries) {
         if (isDirectory(entry.file_type)) {
           try {
-            await IpcClient.deleteRemoteDirectory(entry.path, false);
+            if (isExternalTabs && activeSession?.session_id) {
+              await IpcClient.deleteRemoteDirectory(entry.path, false, activeSession.session_id);
+            } else {
+              await IpcClient.deleteRemoteDirectory(entry.path, false);
+            }
             anyDeleted = true;
           } catch (err: unknown) {
             const msg = extractRemoteOpError(err, "Failed to delete remote directory");
@@ -529,7 +661,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
             }
           }
         } else {
-          await IpcClient.deleteRemoteFile(entry.path);
+          if (isExternalTabs && activeSession?.session_id) {
+            await IpcClient.deleteRemoteFile(entry.path, activeSession.session_id);
+          } else {
+            await IpcClient.deleteRemoteFile(entry.path);
+          }
           anyDeleted = true;
         }
       }
@@ -560,7 +696,11 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
     try {
       for (const entry of recursiveDeleteTargets) {
-        await IpcClient.deleteRemoteDirectory(entry.path, true);
+        if (isExternalTabs && activeSession?.session_id) {
+          await IpcClient.deleteRemoteDirectory(entry.path, true, activeSession.session_id);
+        } else {
+          await IpcClient.deleteRemoteDirectory(entry.path, true);
+        }
         anyDeleted = true;
       }
       setRecursiveDeleteTargets([]);
@@ -578,8 +718,15 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   const handleContextMenu = (e: React.MouseEvent, entry?: FileEntry) => {
     if (!isConnected) return;
     if (entry && !selectedPaths.has(entry.path)) {
-      setSelectedPaths(new Set([entry.path]));
-      setFocusedPath(entry.path);
+      if (isExternalTabs && currentTab && onUpdateTab) {
+        onUpdateTab(currentTab.id, {
+          selectedPaths: new Set([entry.path]),
+          focusedPath: entry.path,
+        });
+      } else {
+        setInternalSelectedPaths(new Set([entry.path]));
+        setInternalFocusedPath(entry.path);
+      }
     }
     setContextMenuPos({ x: e.clientX, y: e.clientY });
   };
@@ -605,7 +752,13 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     activeDrag,
     onInternalDragStart,
     onInternalDragEnd,
-    onAcceptDrop: onDropUpload,
+    onAcceptDrop: (localPaths, targetDir) => {
+      if (isExternalTabs && activeSession?.session_id) {
+        onDropUpload?.(localPaths, targetDir, activeSession.session_id);
+      } else {
+        onDropUpload?.(localPaths, targetDir);
+      }
+    },
   });
 
   return (
@@ -627,6 +780,17 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
               : "border-commander-border"
       }`}
     >
+      {/* 0. Multiple Connection Tabs Bar */}
+      {isExternalTabs && tabs && tabs.length > 0 && (
+        <RemoteTabBar
+          tabs={tabs}
+          activeTabId={activeTabId!}
+          onSelectTab={onSelectTab!}
+          onCloseTab={onCloseTab!}
+          onAddTab={onAddTab!}
+        />
+      )}
+
       {/* Pane Title Bar */}
       <div className="flex items-center justify-between px-3 py-1.5 bg-commander-darker border-b border-commander-border text-xs font-medium select-none gap-2">
         <div className="flex items-center gap-1.5 text-commander-subtext min-w-0">
@@ -718,7 +882,17 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
               {onDownload && caps?.can_download && (
                 <button
                   type="button"
-                  onClick={() => onDownload(Array.from(selectedPaths))}
+                  onClick={() => {
+                    if (isExternalTabs && activeSession?.session_id) {
+                      onDownload(
+                        Array.from(selectedPaths),
+                        undefined,
+                        activeSession.session_id
+                      );
+                    } else {
+                      onDownload(Array.from(selectedPaths));
+                    }
+                  }}
                   disabled={selectedPaths.size === 0}
                   className={`p-1 rounded border transition-colors ${
                     selectedPaths.size > 0
@@ -1239,13 +1413,37 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         entries={selectedEntries}
         canSetPermissions={canSetPermissions}
         canSetOwnership={canSetOwnership}
-        onResolveIdentity={(uid, gid) => IpcClient.resolveRemoteIdentity(uid, gid)}
+        onResolveIdentity={(uid, gid) =>
+          isExternalTabs && activeSession?.session_id
+            ? IpcClient.resolveRemoteIdentity(uid, gid, activeSession.session_id)
+            : IpcClient.resolveRemoteIdentity(uid, gid)
+        }
         onApplyPermissions={async (paths, octalMode, recursive) => {
-          await IpcClient.setRemotePermissions(paths, octalMode, recursive);
+          if (isExternalTabs && activeSession?.session_id) {
+            await IpcClient.setRemotePermissions(
+              paths,
+              octalMode,
+              recursive,
+              activeSession.session_id
+            );
+          } else {
+            await IpcClient.setRemotePermissions(paths, octalMode, recursive);
+          }
           await loadDirectory(displayedPath, false);
         }}
         onApplyOwnership={async (path, uid, gid, userName, groupName) => {
-          await IpcClient.setRemoteOwnership(path, uid, gid, userName, groupName);
+          if (isExternalTabs && activeSession?.session_id) {
+            await IpcClient.setRemoteOwnership(
+              path,
+              uid,
+              gid,
+              userName,
+              groupName,
+              activeSession.session_id
+            );
+          } else {
+            await IpcClient.setRemoteOwnership(path, uid, gid, userName, groupName);
+          }
           await loadDirectory(displayedPath, false);
         }}
         onClose={() => setPropertiesOpen(false)}
@@ -1296,7 +1494,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         isOpen={deleteOpen}
         title="Confirm Remote Deletion"
         description={
-          activeSession?.elevation.type === "ElevatedSudo"
+          activeSession?.elevation?.type === "ElevatedSudo"
             ? "ELEVATED (root) session: Are you sure you want to delete the selected remote item(s)? Directories are deleted only if empty."
             : "Are you sure you want to delete the selected remote item(s)? Directories are deleted only if empty."
         }
@@ -1314,7 +1512,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         isOpen={recursiveDeleteTargets.length > 0}
         title="Confirm Recursive Directory Deletion"
         description={
-          activeSession?.elevation.type === "ElevatedSudo"
+          activeSession?.elevation?.type === "ElevatedSudo"
             ? "WARNING (ELEVATED ROOT SESSION): The following remote directory/directories are NOT empty. Confirming will permanently delete ALL nested files and subdirectories inside them."
             : "WARNING: The following remote directory/directories are NOT empty. Confirming will permanently delete ALL nested files and subdirectories inside them."
         }

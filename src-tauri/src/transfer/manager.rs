@@ -214,12 +214,24 @@ impl TransferManager {
         self.jobs.read().await.clone()
     }
 
-    /// Enqueues local files/directories for upload to `remote_dir`.
+    /// Enqueues local files/directories for upload to `remote_dir` over the active session.
     pub async fn enqueue_uploads(
         &self,
         local_paths: Vec<String>,
         remote_dir: String,
         conflict_policy: ConflictPolicy,
+    ) -> Result<Vec<TransferJob>, AppError> {
+        self.enqueue_uploads_for_session(local_paths, remote_dir, conflict_policy, None)
+            .await
+    }
+
+    /// Enqueues local files/directories for upload to `remote_dir`, optionally specifying a session ID.
+    pub async fn enqueue_uploads_for_session(
+        &self,
+        local_paths: Vec<String>,
+        remote_dir: String,
+        conflict_policy: ConflictPolicy,
+        session_id: Option<String>,
     ) -> Result<Vec<TransferJob>, AppError> {
         if local_paths.is_empty() {
             return Err(AppError::Validation(
@@ -227,7 +239,10 @@ impl TransferManager {
             ));
         }
 
-        let ctx = self.session_manager.active_transfer_context().await?;
+        let ctx = match session_id {
+            Some(ref sid) => self.session_manager.transfer_context_for(sid).await?,
+            None => self.session_manager.active_transfer_context().await?,
+        };
         let dest_dir = normalize_posix_path(&remote_dir);
         let mut created = Vec::new();
 
@@ -265,12 +280,24 @@ impl TransferManager {
         Ok(created)
     }
 
-    /// Enqueues remote files/directories for download to `local_dir`.
+    /// Enqueues remote files/directories for download to `local_dir` over the active session.
     pub async fn enqueue_downloads(
         &self,
         remote_paths: Vec<String>,
         local_dir: String,
         conflict_policy: ConflictPolicy,
+    ) -> Result<Vec<TransferJob>, AppError> {
+        self.enqueue_downloads_for_session(remote_paths, local_dir, conflict_policy, None)
+            .await
+    }
+
+    /// Enqueues remote files/directories for download to `local_dir`, optionally specifying a session ID.
+    pub async fn enqueue_downloads_for_session(
+        &self,
+        remote_paths: Vec<String>,
+        local_dir: String,
+        conflict_policy: ConflictPolicy,
+        session_id: Option<String>,
     ) -> Result<Vec<TransferJob>, AppError> {
         if remote_paths.is_empty() {
             return Err(AppError::Validation(
@@ -278,7 +305,10 @@ impl TransferManager {
             ));
         }
 
-        let ctx = self.session_manager.active_transfer_context().await?;
+        let ctx = match session_id {
+            Some(ref sid) => self.session_manager.transfer_context_for(sid).await?,
+            None => self.session_manager.active_transfer_context().await?,
+        };
         let local_base = PathBuf::from(&local_dir);
         if !local_base.is_dir() {
             return Err(AppError::Validation(format!(
@@ -465,13 +495,20 @@ impl TransferManager {
         // Transition: Connecting
         self.set_job_state(&job_id, TransferState::Connecting).await;
 
-        let ctx = match self.session_manager.active_transfer_context().await {
+        let ctx = match self
+            .session_manager
+            .transfer_context_for(&job.session_id)
+            .await
+        {
             Ok(c) => c,
-            Err(e) => {
-                self.finish_failed(&job_id, e.to_string()).await;
-                self.cancellations.write().await.remove(&job_id);
-                return;
-            }
+            Err(_) => match self.session_manager.active_transfer_context().await {
+                Ok(c) => c,
+                Err(e) => {
+                    self.finish_failed(&job_id, e.to_string()).await;
+                    self.cancellations.write().await.remove(&job_id);
+                    return;
+                }
+            },
         };
 
         let result = match job.direction {
