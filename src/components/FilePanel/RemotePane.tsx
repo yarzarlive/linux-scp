@@ -631,12 +631,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       <div className="flex items-center justify-between px-3 py-1.5 bg-commander-darker border-b border-commander-border text-xs font-medium select-none gap-2">
         <div className="flex items-center gap-1.5 text-commander-subtext min-w-0">
           <Server className="w-3.5 h-3.5 shrink-0" />
-          <span className="shrink-0">Remote Filesystem</span>
-          {activeSession && (
-            <span className="ml-1 font-mono text-[11px] text-commander-text truncate">
-              ({activeSession.username}@{activeSession.host}:{activeSession.port})
-            </span>
-          )}
+          <span className="shrink-0">Remote</span>
           {activeSession?.protocol === "SCP" && (
             <span
               className="ml-1 px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/50 text-[10px] font-bold tracking-wider uppercase shrink-0 flex items-center gap-1 shadow-sm"

@@ -417,7 +417,7 @@ export const LocalPane: React.FC<LocalPaneProps> = ({
       <div className="flex items-center justify-between px-3 py-1.5 bg-commander-darker border-b border-commander-border text-xs font-medium select-none">
         <div className="flex items-center gap-1.5 text-commander-accent">
           <Folder className="w-3.5 h-3.5" />
-          <span>Local Filesystem</span>
+          <span>Local</span>
         </div>
 
         {/* Operation Toolbar Buttons */}
