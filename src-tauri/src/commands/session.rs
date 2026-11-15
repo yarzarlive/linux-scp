@@ -109,9 +109,15 @@ pub async fn list_remote_directory(
     path: Option<String>,
     show_hidden: Option<bool>,
     session_id: Option<String>,
+    refresh: Option<bool>,
 ) -> Result<RemoteDirectoryListing, AppError> {
     state
-        .list_remote_directory(path, show_hidden.unwrap_or(false), session_id.as_deref())
+        .list_remote_directory(
+            path,
+            show_hidden.unwrap_or(false),
+            session_id.as_deref(),
+            refresh.unwrap_or(false),
+        )
         .await
 }
 

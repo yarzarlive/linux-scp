@@ -3,7 +3,7 @@ use crate::models::{
     ConflictDecision, ConflictPolicy, ProfileTransferSettings, TransferConflictPrompt,
     TransferDirection, TransferJob, TransferProgressEvent, TransferState,
 };
-use crate::protocol::sftp::{classify_sftp_error, join_posix_path, normalize_posix_path};
+use crate::protocol::sftp::{classify_sftp_error, join_posix_path, normalize_posix_path, parent_posix_path};
 use crate::protocol::{ActiveTransferContext, SessionManager, TransferClient};
 use russh_sftp::client::error::Error as SftpClientError;
 use russh_sftp::client::SftpSession;
@@ -521,6 +521,17 @@ impl TransferManager {
         match result {
             Ok(()) => {
                 self.finish_completed(&job_id).await;
+                if job.direction == TransferDirection::Upload {
+                    let dest = normalize_posix_path(&job.destination_path);
+                    self.session_manager
+                        .invalidate_directory_cache(&dest, Some(&job.session_id))
+                        .await;
+                    if let Some(parent) = parent_posix_path(&dest) {
+                        self.session_manager
+                            .invalidate_directory_cache(&parent, Some(&job.session_id))
+                            .await;
+                    }
+                }
             }
             Err(TransferFailure::Cancelled) => {
                 self.finish_cancelled(&job_id).await;

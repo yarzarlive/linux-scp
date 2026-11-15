@@ -724,4 +724,27 @@ describe("RemotePane Component", () => {
 
     expect(handleDownload).toHaveBeenCalledWith(["/etc/os-release"]);
   });
+
+  it("passes forceRefresh when manual refresh button is clicked", async () => {
+    vi.mocked(IpcClient.listRemoteDirectory)
+      .mockResolvedValueOnce(makeListing("/home/ubuntu"))
+      .mockResolvedValueOnce(makeListing("/home/ubuntu"));
+
+    render(<RemotePane sessionState={makeConnectedState()} />);
+    await waitFor(() => {
+      expect(screen.getByText("docs")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle("Refresh (F5)"));
+
+    await waitFor(() => {
+      expect(IpcClient.listRemoteDirectory).toHaveBeenCalledTimes(2);
+      expect(IpcClient.listRemoteDirectory).toHaveBeenLastCalledWith(
+        "/home/ubuntu",
+        false,
+        undefined,
+        true
+      );
+    });
+  });
 });

@@ -302,12 +302,14 @@ export class IpcClient {
   static async listRemoteDirectory(
     path?: string,
     showHidden?: boolean,
-    sessionId?: string
+    sessionId?: string,
+    refresh?: boolean
   ): Promise<RemoteDirectoryListing> {
     return this.invokeCommand<RemoteDirectoryListing>("list_remote_directory", {
       path,
       showHidden,
       sessionId: sessionId || null,
+      refresh: Boolean(refresh),
     });
   }
 

@@ -209,7 +209,8 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     async (
       targetPath?: string,
       recordHistory = true,
-      overrideShowHidden?: boolean
+      overrideShowHidden?: boolean,
+      forceRefresh = false
     ): Promise<void> => {
       if (!isConnected || !activeSession) return;
       if (!activeSession.capabilities.can_list_directory) return;
@@ -226,9 +227,17 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
             ? await IpcClient.listRemoteDirectory(
                 targetPath,
                 effectiveHidden,
-                activeSession.session_id
+                activeSession.session_id,
+                forceRefresh
               )
-            : await IpcClient.listRemoteDirectory(targetPath, effectiveHidden);
+            : forceRefresh
+              ? await IpcClient.listRemoteDirectory(
+                  targetPath,
+                  effectiveHidden,
+                  undefined,
+                  true
+                )
+              : await IpcClient.listRemoteDirectory(targetPath, effectiveHidden);
         if (seq !== requestSeqRef.current) return;
 
         if (isExternalTabs && currentTab && onUpdateTab) {
@@ -326,7 +335,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       if (activeSession.capabilities.can_list_directory) {
         const target = currentPath || activeSession.current_remote_path;
         if (target) {
-          loadDirectory(target, false);
+          loadDirectory(target, false, undefined, true);
         }
       }
     }
@@ -388,9 +397,9 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
   const handleRefresh = () => {
     if (currentPath) {
-      loadDirectory(currentPath, false);
+      loadDirectory(currentPath, false, undefined, true);
     } else if (activeSession) {
-      loadDirectory(activeSession.current_remote_path, false);
+      loadDirectory(activeSession.current_remote_path, false, undefined, true);
     }
   };
 
@@ -587,7 +596,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         await IpcClient.createRemoteDirectory(displayedPath, dirName);
       }
       setCreateDirOpen(false);
-      await loadDirectory(displayedPath, false);
+      await loadDirectory(displayedPath, false, undefined, true);
     } catch (err: unknown) {
       setDialogError(extractRemoteOpError(err, "Failed to create remote directory"));
     } finally {
@@ -605,7 +614,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         await IpcClient.createRemoteFile(displayedPath, fileName);
       }
       setCreateFileOpen(false);
-      await loadDirectory(displayedPath, false);
+      await loadDirectory(displayedPath, false, undefined, true);
     } catch (err: unknown) {
       setDialogError(extractRemoteOpError(err, "Failed to create remote file"));
     } finally {
@@ -628,7 +637,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         await IpcClient.renameRemoteEntry(singleSelectedEntry.path, newName);
       }
       setRenameOpen(false);
-      await loadDirectory(displayedPath, false);
+      await loadDirectory(displayedPath, false, undefined, true);
     } catch (err: unknown) {
       setDialogError(extractRemoteOpError(err, "Failed to rename remote item"));
     } finally {
@@ -674,7 +683,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
 
       setDeleteOpen(false);
       if (anyDeleted) {
-        await loadDirectory(displayedPath, false);
+        await loadDirectory(displayedPath, false, undefined, true);
       }
       if (nonEmptyDirs.length > 0) {
         setDialogError(null);
@@ -682,7 +691,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       }
     } catch (err: unknown) {
       if (anyDeleted) {
-        await loadDirectory(displayedPath, false);
+        await loadDirectory(displayedPath, false, undefined, true);
       }
       setDialogError(extractRemoteOpError(err, "Failed to delete remote items"));
     } finally {
@@ -706,10 +715,10 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
         anyDeleted = true;
       }
       setRecursiveDeleteTargets([]);
-      await loadDirectory(displayedPath, false);
+      await loadDirectory(displayedPath, false, undefined, true);
     } catch (err: unknown) {
       if (anyDeleted) {
-        await loadDirectory(displayedPath, false);
+        await loadDirectory(displayedPath, false, undefined, true);
       }
       setDialogError(extractRemoteOpError(err, "Failed to recursively delete remote directory"));
     } finally {
@@ -1431,7 +1440,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
           } else {
             await IpcClient.setRemotePermissions(paths, octalMode, recursive);
           }
-          await loadDirectory(displayedPath, false);
+          await loadDirectory(displayedPath, false, undefined, true);
         }}
         onApplyOwnership={async (path, uid, gid, userName, groupName) => {
           if (isExternalTabs && activeSession?.session_id) {
@@ -1446,7 +1455,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
           } else {
             await IpcClient.setRemoteOwnership(path, uid, gid, userName, groupName);
           }
-          await loadDirectory(displayedPath, false);
+          await loadDirectory(displayedPath, false, undefined, true);
         }}
         onClose={() => setPropertiesOpen(false)}
       />
