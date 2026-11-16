@@ -298,6 +298,7 @@ export class IpcClient {
 
   /**
    * Lists a remote directory over the active SFTP session.
+   * Uses directory listing cache per server IP unless `refresh` is true.
    */
   static async listRemoteDirectory(
     path?: string,
@@ -309,7 +310,7 @@ export class IpcClient {
       path,
       showHidden,
       sessionId: sessionId || null,
-      refresh: Boolean(refresh),
+      refresh: refresh ?? false,
     });
   }
 

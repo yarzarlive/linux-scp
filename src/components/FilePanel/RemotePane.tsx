@@ -45,6 +45,7 @@ import {
 } from "../../utils/remoteNavigation";
 import { RemoteTabState } from "../../types/tabs";
 import { RemoteTabBar } from "./RemoteTabBar";
+import { remoteDirectoryCache } from "../../services/remoteDirectoryCache";
 
 export interface RemotePaneProps {
   showTabBar?: boolean;
@@ -210,15 +211,52 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       targetPath?: string,
       recordHistory = true,
       overrideShowHidden?: boolean,
-      forceRefresh = false
+      refresh = false
     ): Promise<void> => {
       if (!isConnected || !activeSession) return;
       if (!activeSession.capabilities.can_list_directory) return;
 
       const seq = ++requestSeqRef.current;
       const effectiveHidden = overrideShowHidden ?? currentNav.showHidden;
+      const host = activeSession.host;
+      const resolvedTarget = targetPath || currentPath || activeSession.current_remote_path;
 
-      setIsLoading(true);
+      if (refresh) {
+        remoteDirectoryCache.invalidate(host, resolvedTarget);
+      } else {
+        // Fast instant display if cached
+        const cached = remoteDirectoryCache.get(host, resolvedTarget, effectiveHidden);
+        if (cached) {
+          if (isExternalTabs && currentTab && onUpdateTab) {
+            const newNav = recordHistory
+              ? pushRemoteHistory(currentTab.navHistory, cached.current_path)
+              : currentTab.navHistory;
+            onUpdateTab(currentTab.id, {
+              currentPath: cached.current_path,
+              parentPath: cached.parent_path ?? null,
+              homePath: cached.home_path ?? currentTab.homePath,
+              entries: cached.entries,
+              selectedPaths: new Set(),
+              focusedPath: undefined,
+              navHistory: newNav,
+            });
+          } else {
+            setInternalCurrentPath(cached.current_path);
+            setInternalParentPath(cached.parent_path ?? null);
+            if (cached.home_path) {
+              setInternalHomePath(cached.home_path);
+            }
+            setInternalEntries(cached.entries);
+            setInternalSelectedPaths(new Set());
+            setInternalFocusedPath(undefined);
+            if (recordHistory) {
+              updateCurrentNav((prev) => pushRemoteHistory(prev, cached.current_path));
+            }
+          }
+        }
+      }
+
+      setIsLoading(!remoteDirectoryCache.get(host, resolvedTarget, effectiveHidden));
       setRemoteError(null);
 
       try {
@@ -228,17 +266,19 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
                 targetPath,
                 effectiveHidden,
                 activeSession.session_id,
-                forceRefresh
+                refresh ? true : undefined
               )
-            : forceRefresh
-              ? await IpcClient.listRemoteDirectory(
-                  targetPath,
-                  effectiveHidden,
-                  undefined,
-                  true
-                )
-              : await IpcClient.listRemoteDirectory(targetPath, effectiveHidden);
+            : refresh
+            ? await IpcClient.listRemoteDirectory(
+                targetPath,
+                effectiveHidden,
+                undefined,
+                true
+              )
+            : await IpcClient.listRemoteDirectory(targetPath, effectiveHidden);
         if (seq !== requestSeqRef.current) return;
+
+        remoteDirectoryCache.set(host, listing.current_path, effectiveHidden, listing);
 
         if (isExternalTabs && currentTab && onUpdateTab) {
           const newNav = recordHistory
@@ -280,6 +320,7 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
       isConnected,
       activeSession,
       currentNav.showHidden,
+      currentPath,
       isExternalTabs,
       currentTab,
       onUpdateTab,
@@ -293,6 +334,8 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
     if (isConnected && activeSession) {
       if (loadedSessionIdRef.current !== activeSession.session_id) {
         loadedSessionIdRef.current = activeSession.session_id;
+        // On server login, clear all directory listing cache for this server IP
+        remoteDirectoryCache.clearServer(activeSession.host);
         if (!isExternalTabs) {
           setInternalCurrentPath(activeSession.current_remote_path);
           setInternalHomePath(activeSession.home_remote_path ?? null);
@@ -396,6 +439,9 @@ export const RemotePane: React.FC<RemotePaneProps> = ({
   };
 
   const handleRefresh = () => {
+    if (activeSession?.host) {
+      remoteDirectoryCache.invalidate(activeSession.host, currentPath);
+    }
     if (currentPath) {
       loadDirectory(currentPath, false, undefined, true);
     } else if (activeSession) {

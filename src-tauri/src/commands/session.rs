@@ -103,6 +103,7 @@ pub async fn list_known_hosts() -> Result<Vec<KnownHostEntry>, AppError> {
 }
 
 /// Lists a remote directory using the active or specified SFTP session.
+/// Returns cached directory listing if available unless `refresh` is true.
 #[tauri::command]
 pub async fn list_remote_directory(
     state: State<'_, SessionManager>,

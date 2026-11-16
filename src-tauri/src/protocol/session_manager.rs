@@ -9,8 +9,8 @@ use crate::protocol::sftp::{
     apply_remote_permissions_with_adapter, check_sftp_path_is_dir, establish_sftp_connection,
     join_posix_path, list_sftp_directory, normalize_posix_path, parent_posix_path,
     parse_octal_mode, resolve_identities_for_entries, resolve_name_to_id_via_getent,
-    resolve_remote_identity_via_getent, resolve_remote_input_path, validate_remote_entry_name,
-    ActiveSftpConnection, ConnectOutcome, RemoteDirectoryListing, SftpFileSystemAdapter,
+    resolve_remote_identity_via_getent, validate_remote_entry_name, ActiveSftpConnection,
+    ConnectOutcome, RemoteDirectoryListing, SftpFileSystemAdapter,
 };
 use crate::protocol::RemoteFileSystem;
 use russh::client::Handle;
@@ -92,14 +92,14 @@ pub struct SessionStateSnapshot {
     pub trusted_host_key: Option<KnownHostEntry>,
 }
 
-/// Thread-safe directory listing cache partitioned by site.
+/// Thread-safe directory listing cache partitioned by server IP/host.
 /// Caches directory listings of every opened directory for fast speed user experience.
-/// Sites (configured profiles or unique host/port/user endpoints) maintain isolated caches.
-/// Cleared on login/connection to a site; individual directories refreshed on manual refresh or mutation.
+/// Server IPs (e.g., 30.20.10.1 and 100.90.80.10) maintain isolated caches.
+/// Cleared on login; individual directories refreshed on manual refresh or mutation.
 #[derive(Debug, Default, Clone)]
 pub struct DirectoryListingCache {
-    /// site_key -> Map<(normalized_path, show_hidden), RemoteDirectoryListing>
-    sites: std::collections::HashMap<
+    /// Server IP/host -> Map<(normalized_path, show_hidden), RemoteDirectoryListing>
+    servers: std::collections::HashMap<
         String,
         std::collections::HashMap<(String, bool), RemoteDirectoryListing>,
     >,
@@ -108,65 +108,60 @@ pub struct DirectoryListingCache {
 impl DirectoryListingCache {
     pub fn new() -> Self {
         Self {
-            sites: std::collections::HashMap::new(),
+            servers: std::collections::HashMap::new(),
         }
     }
 
-    /// Retrieve cached listing for a site, path, and show_hidden flag.
+    /// Retrieve cached listing for a server IP, path, and show_hidden flag.
     pub fn get(
         &self,
-        site_key: &str,
+        server_ip: &str,
         path: &str,
         show_hidden: bool,
     ) -> Option<&RemoteDirectoryListing> {
         let norm = normalize_posix_path(path);
-        self.sites
-            .get(site_key)
+        self.servers
+            .get(server_ip)
             .and_then(|dirs| dirs.get(&(norm, show_hidden)))
     }
 
-    /// Insert or update cached listing for a site.
+    /// Insert or update cached listing for a server IP.
     pub fn insert(
         &mut self,
-        site_key: String,
+        server_ip: String,
         path: String,
         show_hidden: bool,
         listing: RemoteDirectoryListing,
     ) {
         let norm = normalize_posix_path(&path);
-        self.sites
-            .entry(site_key)
+        self.servers
+            .entry(server_ip)
             .or_default()
             .insert((norm, show_hidden), listing);
     }
 
-    /// Invalidate a specific directory path on a site (both hidden and normal).
-    pub fn invalidate_path(&mut self, site_key: &str, path: &str) {
+    /// Invalidate a specific directory path on a server IP (both hidden and normal).
+    pub fn invalidate_path(&mut self, server_ip: &str, path: &str) {
         let norm = normalize_posix_path(path);
-        if let Some(dirs) = self.sites.get_mut(site_key) {
+        if let Some(dirs) = self.servers.get_mut(server_ip) {
             dirs.remove(&(norm.clone(), true));
             dirs.remove(&(norm, false));
         }
     }
 
-    /// Clear all cached directory listings for a site (on connection).
-    pub fn clear_site(&mut self, site_key: &str) {
-        self.sites.remove(site_key);
+    /// Clear all cached directory listings for a server IP (on login).
+    pub fn clear_server(&mut self, server_ip: &str) {
+        self.servers.remove(server_ip);
     }
 
-    /// Clear all caches across all sites.
+    /// Clear all caches across all servers.
     pub fn clear_all(&mut self) {
-        self.sites.clear();
+        self.servers.clear();
     }
 
-    /// Number of cached directories for a site.
-    pub fn site_cache_count(&self, site_key: &str) -> usize {
-        self.sites.get(site_key).map_or(0, |dirs| dirs.len())
-    }
-
-    /// Check if a site has cached directory listings.
-    pub fn has_site(&self, site_key: &str) -> bool {
-        self.sites.contains_key(site_key)
+    /// Number of cached directories for a server.
+    pub fn server_cache_count(&self, server_ip: &str) -> usize {
+        self.servers.get(server_ip).map_or(0, |dirs| dirs.len())
     }
 }
 
@@ -178,25 +173,6 @@ struct InnerSessionState {
     session_statuses: std::collections::HashMap<String, SessionStatus>,
     session_profiles: std::collections::HashMap<String, ConnectionProfile>,
     directory_cache: DirectoryListingCache,
-}
-
-impl InnerSessionState {
-    pub fn site_key_for_session(&self, session_id: &str) -> Option<String> {
-        if let Some(profile) = self.session_profiles.get(session_id) {
-            return Some(format!("site:{}", profile.id));
-        }
-        if let Some(active) = self.sessions.get(session_id) {
-            let meta = active.session_meta();
-            if let Some(ref pid) = meta.profile_id {
-                return Some(format!("site:{}", pid));
-            }
-            return Some(format!("endpoint:{}@{}:{}", meta.username, meta.host, meta.port));
-        }
-        if let Some(ref profile) = self.last_profile {
-            return Some(format!("site:{}", profile.id));
-        }
-        None
-    }
 }
 
 /// Thread-safe manager tracking connection lifecycle, cancellation, and active session handles.
@@ -357,14 +333,13 @@ impl SessionManager {
         match res {
             Ok(Ok(active_conn)) => {
                 let session_id = active_conn.session_meta().session_id.0.clone();
+                let server_ip = active_conn.session_meta().host.clone();
                 let outcome = ConnectOutcome::Connected {
                     session: Box::new(active_conn.session_meta().clone()),
                     trusted_host_key: active_conn.trusted_host_key().clone(),
                 };
-                let site_key = format!("site:{}", profile.id);
                 let mut guard = self.inner.write().await;
-                // Once connected to a site, old cache of that site is cleared and fresh restart caching
-                guard.directory_cache.clear_site(&site_key);
+                guard.directory_cache.clear_server(&server_ip);
                 guard.status = SessionStatus::Connected;
                 guard.active_session_id = Some(session_id.clone());
                 guard.last_profile = Some(profile.clone());
@@ -478,24 +453,10 @@ impl SessionManager {
             .await
     }
 
-    /// Invalidates cached directory listing for a specific path across active or target session's site.
-    pub async fn invalidate_directory_cache(&self, path: &str, session_id: Option<&str>) {
-        let norm = normalize_posix_path(path.trim());
-        let mut guard = self.inner.write().await;
-        let target_sid = match session_id {
-            Some(sid) => Some(sid.to_string()),
-            None => guard.active_session_id.clone(),
-        };
-        if let Some(sid) = target_sid {
-            if let Some(site_key) = guard.site_key_for_session(&sid) {
-                guard.directory_cache.invalidate_path(&site_key, &norm);
-            }
-        }
-    }
-
     /// Lists a remote directory using the active or specified session.
+    /// Uses cached directory listings per server IP for fast speed user experience.
+    /// If `refresh` is true, bypasses and refreshes the cache for this directory.
     /// Strictly rejects listing if active protocol is SCP (which does not support directory listing).
-    /// Caches directory listings per site unless `refresh == true` or a directory mutation occurred.
     pub async fn list_remote_directory(
         &self,
         path: Option<String>,
@@ -503,7 +464,7 @@ impl SessionManager {
         session_id: Option<&str>,
         refresh: bool,
     ) -> Result<RemoteDirectoryListing, AppError> {
-        let (sftp, current_path, home_path, profile_id, timeout_duration, target_session_id, site_key) = {
+        let (sftp, current_path, home_path, profile_id, timeout_duration, target_session_id, server_ip) = {
             let guard = self.inner.read().await;
             let target_sid = match session_id {
                 Some(sid) => sid,
@@ -511,10 +472,6 @@ impl SessionManager {
                     AppError::Protocol("No active connection established".to_string())
                 })?,
             };
-
-            let site_key = guard
-                .site_key_for_session(target_sid)
-                .unwrap_or_else(|| format!("session:{}", target_sid));
 
             let active = guard.sessions.get(target_sid).ok_or_else(|| {
                 AppError::Protocol(format!(
@@ -534,7 +491,7 @@ impl SessionManager {
                         sftp_conn.session_meta.profile_id.clone(),
                         Duration::from_secs(timeout_secs),
                         target_sid.to_string(),
-                        site_key,
+                        sftp_conn.session_meta.host.clone(),
                     )
                 }
                 ActiveBackendConnection::Scp(_) => {
@@ -546,32 +503,44 @@ impl SessionManager {
             }
         };
 
-        let raw_target = path
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&current_path);
+        // Determine normalized target path for cache lookup
+        let target_norm = match &path {
+            Some(p) if !p.trim().is_empty() => {
+                let trimmed = p.trim();
+                if trimmed == "~" || trimmed.starts_with("~/") {
+                    if let Some(ref home) = home_path {
+                        if trimmed == "~" {
+                            normalize_posix_path(home)
+                        } else {
+                            normalize_posix_path(&join_posix_path(home, &trimmed[2..]))
+                        }
+                    } else {
+                        normalize_posix_path(trimmed)
+                    }
+                } else if !trimmed.starts_with('/') {
+                    normalize_posix_path(&join_posix_path(&current_path, trimmed))
+                } else {
+                    normalize_posix_path(trimmed)
+                }
+            }
+            _ => normalize_posix_path(&current_path),
+        };
 
-        let resolved_target =
-            resolve_remote_input_path(raw_target, &current_path, home_path.as_deref());
-
-        // Fast-path: return cached directory listing for this site if available and not forced to refresh
+        // If not a forced refresh, return cached directory listing if present
         if !refresh {
             let guard = self.inner.read().await;
-            if let Some(cached) = guard.directory_cache.get(&site_key, &resolved_target, show_hidden) {
+            if let Some(cached) = guard.directory_cache.get(&server_ip, &target_norm, show_hidden) {
                 let cached_listing = cached.clone();
                 drop(guard);
 
-                // Update current_remote_path in session metadata
-                {
-                    let mut guard = self.inner.write().await;
-                    if let Some(active) = guard.sessions.get_mut(&target_session_id) {
-                        active.session_meta_mut().current_remote_path = cached_listing.current_path.clone();
-                        active.session_meta_mut().last_active_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis() as u64)
-                            .unwrap_or(active.session_meta().last_active_ms);
-                    }
+                // Update session's current path and last active timestamp
+                let mut write_guard = self.inner.write().await;
+                if let Some(active) = write_guard.sessions.get_mut(&target_session_id) {
+                    active.session_meta_mut().current_remote_path = cached_listing.current_path.clone();
+                    active.session_meta_mut().last_active_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(active.session_meta().last_active_ms);
                 }
                 return Ok(cached_listing);
             }
@@ -579,7 +548,7 @@ impl SessionManager {
 
         let mut listing = list_sftp_directory(
             &sftp,
-            Some(&resolved_target),
+            path.as_deref(),
             &current_path,
             home_path.as_deref(),
             show_hidden,
@@ -602,26 +571,7 @@ impl SessionManager {
             }
         }
 
-        // Cache the newly opened directory listing uniquely for this site
-        {
-            let mut guard = self.inner.write().await;
-            guard.directory_cache.insert(
-                site_key.clone(),
-                listing.current_path.clone(),
-                show_hidden,
-                listing.clone(),
-            );
-            if resolved_target != listing.current_path {
-                guard.directory_cache.insert(
-                    site_key,
-                    resolved_target,
-                    show_hidden,
-                    listing.clone(),
-                );
-            }
-        }
-
-        // Update current_remote_path in session metadata
+        // Update current_remote_path in session metadata and cache the directory listing
         {
             let mut guard = self.inner.write().await;
             if let Some(active) = guard.sessions.get_mut(&target_session_id) {
@@ -631,6 +581,12 @@ impl SessionManager {
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or(active.session_meta().last_active_ms);
             }
+            guard.directory_cache.insert(
+                server_ip,
+                listing.current_path.clone(),
+                show_hidden,
+                listing.clone(),
+            );
         }
 
         // Persist last remote directory for saved connections
@@ -646,6 +602,36 @@ impl SessionManager {
         }
 
         Ok(listing)
+    }
+
+    /// Invalidates cached directory listings for a path on the session's server IP.
+    pub async fn invalidate_directory_cache_for_path(&self, session_id: Option<&str>, path: &str) {
+        let mut guard = self.inner.write().await;
+        let target_sid = match session_id {
+            Some(sid) => Some(sid.to_string()),
+            None => guard.active_session_id.clone(),
+        };
+        if let Some(ref sid) = target_sid {
+            if let Some(active) = guard.sessions.get(sid) {
+                let server_ip = active.session_meta().host.clone();
+                guard.directory_cache.invalidate_path(&server_ip, path);
+            }
+        }
+    }
+
+    /// Clears all directory cache for the specified session's server IP.
+    pub async fn clear_server_directory_cache(&self, session_id: Option<&str>) {
+        let mut guard = self.inner.write().await;
+        let target_sid = match session_id {
+            Some(sid) => Some(sid.to_string()),
+            None => guard.active_session_id.clone(),
+        };
+        if let Some(ref sid) = target_sid {
+            if let Some(active) = guard.sessions.get(sid) {
+                let server_ip = active.session_meta().host.clone();
+                guard.directory_cache.clear_server(&server_ip);
+            }
+        }
     }
 
     /// Checks whether a remote path (following symlinks) points to a directory.
@@ -780,7 +766,8 @@ impl SessionManager {
         let target = join_posix_path(&parent_norm, &valid_name);
         let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.create_directory(&target).await?;
-        self.invalidate_directory_cache(&parent_norm, session_id).await;
+        self.invalidate_directory_cache_for_path(session_id, &parent_norm)
+            .await;
         Ok(target)
     }
 
@@ -796,7 +783,8 @@ impl SessionManager {
         let target = join_posix_path(&parent_norm, &valid_name);
         let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.create_file(&target).await?;
-        self.invalidate_directory_cache(&parent_norm, session_id).await;
+        self.invalidate_directory_cache_for_path(session_id, &parent_norm)
+            .await;
         Ok(target)
     }
 
@@ -815,8 +803,8 @@ impl SessionManager {
         let target = join_posix_path(&parent, &valid_name);
         let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.rename(&source_norm, &target).await?;
-        self.invalidate_directory_cache(&parent, session_id).await;
-        self.invalidate_directory_cache(&source_norm, session_id).await;
+        self.invalidate_directory_cache_for_path(session_id, &parent)
+            .await;
         Ok(target)
     }
 
@@ -826,12 +814,11 @@ impl SessionManager {
         path: &str,
         session_id: Option<&str>,
     ) -> Result<(), AppError> {
-        let norm = normalize_posix_path(path.trim());
-        let parent = parent_posix_path(&norm);
         let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.delete_file(path).await?;
-        if let Some(ref p) = parent {
-            self.invalidate_directory_cache(p, session_id).await;
+        if let Some(parent) = parent_posix_path(path) {
+            self.invalidate_directory_cache_for_path(session_id, &parent)
+                .await;
         }
         Ok(())
     }
@@ -843,13 +830,13 @@ impl SessionManager {
         recursive: bool,
         session_id: Option<&str>,
     ) -> Result<(), AppError> {
-        let norm = normalize_posix_path(path.trim());
-        let parent = parent_posix_path(&norm);
         let adapter = self.active_fs_adapter_for(session_id).await?;
         adapter.delete_directory(path, recursive).await?;
-        self.invalidate_directory_cache(&norm, session_id).await;
-        if let Some(ref p) = parent {
-            self.invalidate_directory_cache(p, session_id).await;
+        self.invalidate_directory_cache_for_path(session_id, path)
+            .await;
+        if let Some(parent) = parent_posix_path(path) {
+            self.invalidate_directory_cache_for_path(session_id, &parent)
+                .await;
         }
         Ok(())
     }
@@ -893,15 +880,7 @@ impl SessionManager {
                     recursive,
                     ctx.timeout_duration,
                 )
-                .await?;
-                for p in &paths {
-                    let norm = normalize_posix_path(p.trim());
-                    self.invalidate_directory_cache(&norm, session_id).await;
-                    if let Some(parent) = parent_posix_path(&norm) {
-                        self.invalidate_directory_cache(&parent, session_id).await;
-                    }
-                }
-                Ok(())
+                .await
             }
             TransferClient::Scp { .. } => Err(AppError::Protocol(
                 "Setting permissions is not supported by SCP protocol".to_string(),
@@ -996,15 +975,7 @@ impl SessionManager {
                     group_name: None,
                 },
             )
-            .await?;
-
-        let norm = normalize_posix_path(path.trim());
-        self.invalidate_directory_cache(&norm, session_id).await;
-        if let Some(parent) = parent_posix_path(&norm) {
-            self.invalidate_directory_cache(&parent, session_id).await;
-        }
-
-        Ok(())
+            .await
     }
 
     /// Optional, controlled `getent` lookup to display user/group names for numeric UID/GID.
@@ -1299,49 +1270,80 @@ mod tests {
     }
 
     #[test]
-    fn test_directory_listing_cache_per_site_and_invalidation() {
+    fn test_directory_listing_cache_per_server_ip_isolation_and_refresh() {
         let mut cache = DirectoryListingCache::new();
-        let site_a = "site:profile-a".to_string();
-        let site_b = "site:profile-b".to_string();
 
-        let listing_a = RemoteDirectoryListing {
-            current_path: "/var/www".to_string(),
-            parent_path: Some("/var".to_string()),
-            home_path: Some("/home/ubuntu".to_string()),
-            entries: vec![],
+        let make_listing = |path: &str, names: &[&str]| RemoteDirectoryListing {
+            current_path: path.to_string(),
+            parent_path: None,
+            home_path: Some("/home/user".to_string()),
+            entries: names
+                .iter()
+                .map(|name| crate::models::FileEntry {
+                    name: name.to_string(),
+                    path: format!("{}/{}", path.trim_end_matches('/'), name),
+                    file_type: crate::models::FileType::Regular,
+                    is_hidden: false,
+                    metadata: crate::models::FileMetadata {
+                        size: Some(100),
+                        modified_at_secs: Some(1700000000),
+                        accessed_at_secs: None,
+                        permissions: None,
+                        ownership: None,
+                    },
+                })
+                .collect(),
         };
 
-        let listing_b = RemoteDirectoryListing {
-            current_path: "/var/www".to_string(),
-            parent_path: Some("/var".to_string()),
-            home_path: Some("/home/root".to_string()),
-            entries: vec![],
-        };
+        let server_a = "30.20.10.1";
+        let server_b = "100.90.80.10";
 
-        // Cache directory for site A
-        cache.insert(site_a.clone(), "/var/www".to_string(), false, listing_a.clone());
-        assert_eq!(cache.site_cache_count(&site_a), 1);
-        assert_eq!(cache.site_cache_count(&site_b), 0);
-        assert!(cache.get(&site_a, "/var/www", false).is_some());
-        assert!(cache.get(&site_b, "/var/www", false).is_none());
+        // 1. Cache directory listings for server A
+        let listing_a_var = make_listing("/var/log", &["syslog", "auth.log"]);
+        let listing_a_etc = make_listing("/etc", &["hosts"]);
+        cache.insert(server_a.to_string(), "/var/log".to_string(), false, listing_a_var.clone());
+        cache.insert(server_a.to_string(), "/etc".to_string(), false, listing_a_etc.clone());
 
-        // Cache directory for site B
-        cache.insert(site_b.clone(), "/var/www".to_string(), false, listing_b.clone());
-        assert_eq!(cache.site_cache_count(&site_b), 1);
+        // 2. Cache distinct directory listings for server B with same path names
+        let listing_b_var = make_listing("/var/log", &["nginx.log", "daemon.log"]);
+        let listing_b_opt = make_listing("/opt", &["app"]);
+        cache.insert(server_b.to_string(), "/var/log".to_string(), false, listing_b_var.clone());
+        cache.insert(server_b.to_string(), "/opt".to_string(), false, listing_b_opt.clone());
 
-        // Normalize path matches
-        assert!(cache.get(&site_a, "/var/www/", false).is_some());
+        // Verify independent caches per server IP:
+        assert_eq!(cache.server_cache_count(server_a), 2);
+        assert_eq!(cache.server_cache_count(server_b), 2);
 
-        // Invalidate specific path on site A
-        cache.invalidate_path(&site_a, "/var/www");
-        assert_eq!(cache.site_cache_count(&site_a), 0);
-        assert!(cache.get(&site_a, "/var/www", false).is_none());
-        // Site B is unaffected
-        assert!(cache.get(&site_b, "/var/www", false).is_some());
+        // Server A's /var/log has syslog
+        let cached_a = cache.get(server_a, "/var/log", false).expect("Server A /var/log");
+        assert_eq!(cached_a.entries.len(), 2);
+        assert_eq!(cached_a.entries[0].name, "syslog");
 
-        // Clear site B on connection
-        cache.clear_site(&site_b);
-        assert_eq!(cache.site_cache_count(&site_b), 0);
-        assert!(!cache.has_site(&site_b));
+        // Server B's /var/log has nginx.log (unique and not overwritten by Server A)
+        let cached_b = cache.get(server_b, "/var/log", false).expect("Server B /var/log");
+        assert_eq!(cached_b.entries.len(), 2);
+        assert_eq!(cached_b.entries[0].name, "nginx.log");
+
+        // 3. Invalidate / manual refresh of a single directory on Server A
+        let updated_a_var = make_listing("/var/log", &["syslog", "auth.log", "kern.log"]);
+        cache.insert(server_a.to_string(), "/var/log".to_string(), false, updated_a_var);
+        let refreshed_a = cache.get(server_a, "/var/log", false).unwrap();
+        assert_eq!(refreshed_a.entries.len(), 3);
+        // Server B is untouched by Server A's refresh:
+        assert_eq!(cache.get(server_b, "/var/log", false).unwrap().entries.len(), 2);
+
+        // 4. Invalidation on file/dir mutation:
+        cache.invalidate_path(server_a, "/var/log");
+        assert!(cache.get(server_a, "/var/log", false).is_none());
+        assert!(cache.get(server_a, "/etc", false).is_some());
+
+        // 5. Clear all directory listings on login to Server A:
+        cache.clear_server(server_a);
+        assert_eq!(cache.server_cache_count(server_a), 0);
+        assert!(cache.get(server_a, "/etc", false).is_none());
+        // Server B still retains all its directory listings:
+        assert_eq!(cache.server_cache_count(server_b), 2);
+        assert!(cache.get(server_b, "/var/log", false).is_some());
+        assert!(cache.get(server_b, "/opt", false).is_some());
     }
 }

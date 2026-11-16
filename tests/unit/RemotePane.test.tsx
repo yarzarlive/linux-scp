@@ -4,6 +4,7 @@ import { RemotePane } from "../../src/components/FilePanel/RemotePane";
 import { SessionStateSnapshot } from "../../src/types/session";
 import { IpcClient } from "../../src/services/ipc";
 import { RemoteDirectoryListing } from "../../src/types/filesystem";
+import { remoteDirectoryCache } from "../../src/services/remoteDirectoryCache";
 
 vi.mock("../../src/services/ipc", () => ({
   IpcClient: {
@@ -91,6 +92,7 @@ function makeListing(current_path: string): RemoteDirectoryListing {
 describe("RemotePane Component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    remoteDirectoryCache.clearAll();
   });
 
   it("renders explicit honest disconnected state with no fabricated files", () => {
